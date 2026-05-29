@@ -23,8 +23,8 @@ describe('SpreadChart', () => {
 
   it('renders warming banner when Samples < 100', () => {
     useMarketStore.setState({
-      spreads: [{ Pair: 'binance-kraken', Mean: 0, Std: 0.001, Samples: 42 }],
-      zSeries: { 'binance-kraken': [{ t: Date.now(), z: 0.5 }] },
+      spreads: [{ Pair: 'binance-okx', Mean: 0, Std: 0.001, Samples: 42 }],
+      zSeries: { 'binance-okx': [{ t: Date.now(), z: 0.5 }] },
     })
     render(<SpreadChart />)
     expect(screen.getByText(/Calentando modelo/)).toBeInTheDocument()
@@ -33,8 +33,8 @@ describe('SpreadChart', () => {
 
   it('does NOT render warming banner when Samples >= 100', () => {
     useMarketStore.setState({
-      spreads: [{ Pair: 'binance-kraken', Mean: 0, Std: 0.001, Samples: 100 }],
-      zSeries: { 'binance-kraken': [{ t: Date.now(), z: 0.5 }] },
+      spreads: [{ Pair: 'binance-okx', Mean: 0, Std: 0.001, Samples: 100 }],
+      zSeries: { 'binance-okx': [{ t: Date.now(), z: 0.5 }] },
     })
     render(<SpreadChart />)
     expect(screen.queryByText(/Calentando modelo/)).not.toBeInTheDocument()
@@ -52,7 +52,7 @@ describe('SpreadChart', () => {
     const now = Date.now()
     useMarketStore.setState({
       tradeMarks: {
-        'binance-kraken': [{ t: now, z: 1.5, profit: 10 }],
+        'binance-okx': [{ t: now, z: 1.5, profit: 10 }],
       },
     })
     render(<SpreadChart />)

@@ -25,7 +25,7 @@ import (
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/wallet"
 )
 
-var exchangeNames = []string{"binance", "kraken", "bybit"}
+var exchangeNames = []string{"binance", "kraken", "bybit", "okx", "gate"}
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -54,6 +54,8 @@ func main() {
 		exchange.NewBinance(cfg.BinanceWSURL),
 		exchange.NewKraken(cfg.KrakenWSURL),
 		exchange.NewBybit(cfg.BybitWSURL),
+		exchange.NewOKX(cfg.OKXWSURL),
+		exchange.NewGate(cfg.GateWSURL),
 	}
 
 	agg := feed.NewAggregator(connectors)
@@ -100,6 +102,8 @@ func main() {
 				"binance": {TakerFee: 0.001, SlippageFactor: 0.0002},
 				"kraken":  {TakerFee: 0.0026, SlippageFactor: 0.0003},
 				"bybit":   {TakerFee: 0.001, SlippageFactor: 0.0002},
+				"okx":     {TakerFee: 0.001, SlippageFactor: 0.0002},
+				"gate":    {TakerFee: 0.002, SlippageFactor: 0.0003},
 			},
 			MinNetProfitPct:    cfg.MinNetProfitPct,
 			OpportunityTTL:     cfg.OpportunityTTL,
@@ -132,7 +136,7 @@ func main() {
 
 	// --- HTTP server ---
 
-	apiHandler := server.NewAPIHandler(st, rm, spreadStatsFn, cfg.AllowedOrigin)
+	apiHandler := server.NewAPIHandler(st, rm, spreadStatsFn, cfg.AllowedOrigin, len(exchangeNames))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)
@@ -177,10 +181,20 @@ func runProcessingLoop(
 	ticker := time.NewTicker(cfg.ExecutionInterval)
 	defer ticker.Stop()
 
+	// Re-broadcast all known prices every 5s so the frontend keeps timestamps
+	// fresh even for low-frequency exchanges (e.g. Kraken only ticks on change).
+	snapshotTicker := time.NewTicker(5 * time.Second)
+	defer snapshotTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+
+		case <-snapshotTicker.C:
+			for _, u := range agg.Snapshot() {
+				publishPriceUpdate(hub, u)
+			}
 
 		case update, ok := <-agg.Updates():
 			if !ok {

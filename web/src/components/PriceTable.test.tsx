@@ -5,7 +5,7 @@ import PriceTable from './PriceTable'
 
 function resetStore() {
   useMarketStore.setState({
-    prices: { binance: null, kraken: null, bybit: null },
+    prices: { binance: null, kraken: null, bybit: null, okx: null, gate: null },
   })
 }
 
@@ -19,39 +19,45 @@ describe('PriceTable', () => {
     vi.useRealTimers()
   })
 
-  it('renders 3 rows (binance, kraken, bybit)', () => {
+  it('renders 5 rows (binance, kraken, bybit, okx, gate)', () => {
     render(<PriceTable />)
     expect(screen.getByText('Binance')).toBeInTheDocument()
     expect(screen.getByText('Kraken')).toBeInTheDocument()
     expect(screen.getByText('Bybit')).toBeInTheDocument()
+    expect(screen.getByText('OKX')).toBeInTheDocument()
+    expect(screen.getByText('Gate.io')).toBeInTheDocument()
   })
 
   it('shows "Esperando..." when price is null', () => {
     render(<PriceTable />)
     const waiting = screen.getAllByText('Esperando...')
-    expect(waiting.length).toBeGreaterThanOrEqual(3)
+    expect(waiting.length).toBeGreaterThanOrEqual(5)
   })
 
-  it('shows "En vivo" when receivedAt is recent (< 2000ms)', () => {
+  it('shows "En vivo" when receivedAt is recent (< 10000ms)', () => {
     const now = Date.now()
     useMarketStore.setState({
       prices: {
         binance: { exchange: 'binance', bid: 60000, ask: 60001, receivedAt: now },
         kraken: null,
         bybit: null,
+        okx: null,
+        gate: null,
       },
     })
     render(<PriceTable />)
     expect(screen.getByText('En vivo')).toBeInTheDocument()
   })
 
-  it('shows "Desact." when receivedAt is older than 2000ms', () => {
-    const stale = Date.now() - 3000
+  it('shows "Desact." when receivedAt is older than 10000ms', () => {
+    const stale = Date.now() - 12_000
     useMarketStore.setState({
       prices: {
         binance: { exchange: 'binance', bid: 60000, ask: 60001, receivedAt: stale },
         kraken: null,
         bybit: null,
+        okx: null,
+        gate: null,
       },
     })
     render(<PriceTable />)
@@ -65,6 +71,8 @@ describe('PriceTable', () => {
         binance: { exchange: 'binance', bid: 60000.5, ask: 60001.25, receivedAt: now },
         kraken: null,
         bybit: null,
+        okx: null,
+        gate: null,
       },
     })
     render(<PriceTable />)

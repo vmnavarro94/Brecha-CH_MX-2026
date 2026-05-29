@@ -5,9 +5,9 @@ import type { SpreadStats } from '../types/api'
 import type { ZPoint, TradeMark } from '../store/marketStore'
 
 const PAIR_LABEL: Record<string, string> = {
-  'binance-kraken': 'Binance · Kraken',
+  'binance-okx': 'Binance · OKX',
   'binance-bybit': 'Binance · Bybit',
-  'kraken-bybit': 'Kraken · Bybit',
+  'okx-bybit': 'OKX · Bybit',
 }
 
 const Z_MIN = -3.5
@@ -151,11 +151,9 @@ export default function SpreadChart() {
   const zSeries = useMarketStore((s) => s.zSeries)
   const spreads = useMarketStore((s) => s.spreads)
   const tradeMarks = useMarketStore((s) => s.tradeMarks)
-  const [vis, setVis] = useState<Record<string, boolean>>({
-    'binance-kraken': true,
-    'binance-bybit': true,
-    'kraken-bybit': true,
-  })
+  const [vis, setVis] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(FEATURED_PAIRS.map((p) => [p, true]))
+  )
   const [width, setWidth] = useState(760)
   const bodyRef = useRef<HTMLDivElement>(null)
 

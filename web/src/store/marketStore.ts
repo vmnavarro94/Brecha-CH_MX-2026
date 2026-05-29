@@ -5,12 +5,12 @@ import type {
 } from '../types/api'
 import type { RawOpportunity, RawTrade, RawPriceUpdate } from '../types/api'
 
-export const EXCHANGES: Exchange[] = ['binance', 'kraken', 'bybit']
-export const FEATURED_PAIRS = ['binance-kraken', 'binance-bybit', 'kraken-bybit']
+export const EXCHANGES: Exchange[] = ['binance', 'kraken', 'bybit', 'okx', 'gate']
+export const FEATURED_PAIRS = ['binance-okx', 'binance-bybit', 'okx-bybit']
 export const PAIR_COLOR: Record<string, string> = {
-  'binance-kraken': 'var(--orange)',
+  'binance-okx': 'var(--orange)',
   'binance-bybit': 'var(--info)',
-  'kraken-bybit': 'var(--up)',
+  'okx-bybit': 'var(--up)',
 }
 
 export interface ZPoint { t: number; z: number }
@@ -87,7 +87,7 @@ function computeZ(
 const WINDOW_MS = 60_000
 
 export const useMarketStore = create<MarketState & MarketActions>((set, _get) => ({
-  prices: { binance: null, kraken: null, bybit: null },
+  prices: { binance: null, kraken: null, bybit: null, okx: null, gate: null },
   opportunities: [],
   trades: [],
   pnlHistory: [],

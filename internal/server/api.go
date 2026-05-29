@@ -18,6 +18,7 @@ type apiHandler struct {
 	risk          *risk.RiskManager
 	spreadsFn     func() map[string]model.SpreadStats
 	allowedOrigin string
+	exchangeCount int
 	mux           *http.ServeMux
 }
 
@@ -28,12 +29,14 @@ func NewAPIHandler(
 	rm *risk.RiskManager,
 	spreadsFn func() map[string]model.SpreadStats,
 	allowedOrigin string,
+	exchangeCount int,
 ) http.Handler {
 	h := &apiHandler{
 		store:         st,
 		risk:          rm,
 		spreadsFn:     spreadsFn,
 		allowedOrigin: allowedOrigin,
+		exchangeCount: exchangeCount,
 		mux:           http.NewServeMux(),
 	}
 	h.mux.HandleFunc("/api/status", h.handleStatus)
@@ -63,7 +66,7 @@ func (h *apiHandler) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"circuit_breaker_state": h.risk.State().String(),
-		"exchange_count":        3, // binance, kraken, bybit
+		"exchange_count":        h.exchangeCount,
 		"trade_count":           len(trades),
 	})
 }

@@ -38,7 +38,7 @@ func newTestComponents(t *testing.T) (*store.Store, *risk.RiskManager) {
 
 func newAPI(t *testing.T, st *store.Store, rm *risk.RiskManager, spreadsFn func() map[string]model.SpreadStats) http.Handler {
 	t.Helper()
-	return server.NewAPIHandler(st, rm, spreadsFn, "http://localhost:3000")
+	return server.NewAPIHandler(st, rm, spreadsFn, "http://localhost:3000", 3)
 }
 
 func getJSON(t *testing.T, handler http.Handler, path string) (*http.Response, map[string]interface{}) {

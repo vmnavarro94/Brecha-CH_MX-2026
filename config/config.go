@@ -12,6 +12,8 @@ type Config struct {
 	BinanceWSURL string
 	KrakenWSURL  string
 	BybitWSURL   string
+	OKXWSURL     string
+	GateWSURL    string
 
 	MinNetProfitPct    float64
 	MaxPositionUSDT    float64
@@ -38,6 +40,8 @@ func Load() *Config {
 		BinanceWSURL:       getEnv("BINANCE_WS_URL", "wss://stream.binance.com:9443"),
 		KrakenWSURL:        getEnv("KRAKEN_WS_URL", "wss://ws.kraken.com"),
 		BybitWSURL:         getEnv("BYBIT_WS_URL", "wss://stream.bybit.com/v5/public/spot"),
+		OKXWSURL:           getEnv("OKX_WS_URL", "wss://ws.okx.com:8443/ws/v5/public"),
+		GateWSURL:          getEnv("GATE_WS_URL", "wss://api.gateio.ws/ws/v4/"),
 		MinNetProfitPct:    getEnvFloat("MIN_NET_PROFIT_PCT", 0.0015),
 		MaxPositionUSDT:    getEnvFloat("MAX_POSITION_USDT", 1000),
 		ExecutionInterval:  time.Duration(getEnvInt("EXECUTION_INTERVAL_MS", 100)) * time.Millisecond,

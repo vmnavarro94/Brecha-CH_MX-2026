@@ -1,6 +1,6 @@
 export type CircuitBreakerState = 'active' | 'watching' | 'paused'
 export type OpportunityStatus = 'detected' | 'executed' | 'skipped' | 'expired'
-export type Exchange = 'binance' | 'kraken' | 'bybit'
+export type Exchange = 'binance' | 'kraken' | 'bybit' | 'okx' | 'gate'
 
 export interface PriceData {
   exchange: Exchange

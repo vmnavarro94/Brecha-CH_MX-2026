@@ -7,6 +7,8 @@ const EX_META: Record<Exchange, { label: string; color: string }> = {
   binance: { label: 'Binance', color: '#F3BA2F' },
   kraken: { label: 'Kraken', color: '#7B68EE' },
   bybit: { label: 'Bybit', color: '#F7A600' },
+  okx: { label: 'OKX', color: '#4086FF' },
+  gate: { label: 'Gate.io', color: '#2ECC71' },
 }
 
 function px2(n: number): string {
@@ -107,7 +109,7 @@ function PriceRow({ ex, p, now }: PriceRowProps) {
 
   if (p) {
     const age = now - p.receivedAt
-    if (age < 2000) {
+    if (age < 10_000) {
       statusLabel = 'En vivo'
       statusColor = 'var(--up)'
       dotAnimation = 'bx-pulse calc(1.5s / var(--mo)) ease-in-out infinite'
