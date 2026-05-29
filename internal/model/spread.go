@@ -105,3 +105,8 @@ func (m *SpreadModel) ZScore(x float64) float64 {
 func (m *SpreadModel) IsReady() bool {
 	return m.n >= MinSamples
 }
+
+// N returns the current number of samples held by the model.
+func (m *SpreadModel) N() int {
+	return m.n
+}
