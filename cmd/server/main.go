@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -41,7 +42,8 @@ func main() {
 
 	clk := types.RealClock{}
 
-	st := store.NewStore()
+	st := store.NewStore(cfg.DataDir)
+	defer st.Close()
 
 	w := wallet.NewMultiWallet(exchangeNames, map[string]float64{
 		"USDT": cfg.InitialUSDTPerExchange,
@@ -98,24 +100,24 @@ func main() {
 
 	// --- Engine ---
 
+	exchangeFees := exchange.Fees
+	if cfg.DemoMode {
+		exchangeFees = exchange.DemoFees
+	}
+
+	engineFees := make(map[string]engine.FeeConfig, len(exchangeFees))
+	for name, f := range exchangeFees {
+		engineFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.SlippageFactor}
+	}
+
 	eng := engine.NewEngine(
 		agg.Snapshot,
 		spreadModels,
 		clk,
 		engine.Config{
-			Fees: map[string]engine.FeeConfig{
-				"binance": {TakerFee: 0.001, SlippageFactor: 0.0002},
-				"kraken":  {TakerFee: 0.0026, SlippageFactor: 0.0003},
-				"bybit":   {TakerFee: 0.001, SlippageFactor: 0.0002},
-				"okx":    {TakerFee: 0.001, SlippageFactor: 0.0002},
-				"gate":   {TakerFee: 0.002, SlippageFactor: 0.0003},
-				"mexc":      {TakerFee: 0.002, SlippageFactor: 0.0003},
-				"bitget":    {TakerFee: 0.001, SlippageFactor: 0.0002},
-				"htx":       {TakerFee: 0.002, SlippageFactor: 0.0003},
-				"cryptocom": {TakerFee: 0.0007, SlippageFactor: 0.0002},
-				"kucoin":    {TakerFee: 0.001, SlippageFactor: 0.0002},
-			},
+			Fees:               engineFees,
 			MinNetProfitPct:    cfg.MinNetProfitPct,
+			MaxPositionUSDT:    cfg.MaxPositionUSDT,
 			OpportunityTTL:     cfg.OpportunityTTL,
 			StalenessThreshold: cfg.StalenessThreshold,
 		},
@@ -140,13 +142,108 @@ func main() {
 	hub := server.NewHub()
 	go hub.Run()
 
+	// --- Live config controller ---
+
+	intervalCh := make(chan time.Duration, 1)
+
+	var cfgMu sync.Mutex
+	liveCfg := server.ConfigSnapshot{
+		DemoMode:             cfg.DemoMode,
+		MinNetProfitPct:      cfg.MinNetProfitPct,
+		MaxPositionUSDT:      cfg.MaxPositionUSDT,
+		StalenessThresholdMs: int(cfg.StalenessThreshold / time.Millisecond),
+		ExecutionIntervalMs:  int(cfg.ExecutionInterval / time.Millisecond),
+		CircuitBreakerN:      cfg.CircuitBreakerN,
+		CircuitBreakerLossPct: cfg.CircuitBreakerLossPct,
+		Fees:                 toFeeInfoMap(exchangeFees),
+	}
+
+	getConfigFn := func() server.ConfigSnapshot {
+		cfgMu.Lock()
+		defer cfgMu.Unlock()
+		return liveCfg
+	}
+
+	patchConfigFn := func(patch server.ConfigPatch) server.ConfigSnapshot {
+		cfgMu.Lock()
+		defer cfgMu.Unlock()
+
+		if patch.MinNetProfitPct != nil {
+			liveCfg.MinNetProfitPct = *patch.MinNetProfitPct
+			eng.SetMinNetProfitPct(*patch.MinNetProfitPct)
+			rm.SetMinNetProfitPct(*patch.MinNetProfitPct)
+		}
+		if patch.MaxPositionUSDT != nil {
+			liveCfg.MaxPositionUSDT = *patch.MaxPositionUSDT
+			eng.SetMaxPositionUSDT(*patch.MaxPositionUSDT)
+		}
+		if patch.StalenessThresholdMs != nil {
+			d := time.Duration(*patch.StalenessThresholdMs) * time.Millisecond
+			liveCfg.StalenessThresholdMs = *patch.StalenessThresholdMs
+			eng.SetStalenessThreshold(d)
+		}
+		if patch.ExecutionIntervalMs != nil {
+			liveCfg.ExecutionIntervalMs = *patch.ExecutionIntervalMs
+			select {
+			case intervalCh <- time.Duration(*patch.ExecutionIntervalMs) * time.Millisecond:
+			default:
+			}
+		}
+		if patch.CircuitBreakerN != nil {
+			liveCfg.CircuitBreakerN = *patch.CircuitBreakerN
+			rm.SetConsecutiveLossN(*patch.CircuitBreakerN)
+		}
+		if patch.CircuitBreakerLossPct != nil {
+			liveCfg.CircuitBreakerLossPct = *patch.CircuitBreakerLossPct
+			rm.SetLossThreshold(*patch.CircuitBreakerLossPct)
+		}
+		if patch.DemoMode != nil {
+			liveCfg.DemoMode = *patch.DemoMode
+			var srcFees map[string]exchange.FeeConfig
+			if *patch.DemoMode {
+				srcFees = exchange.DemoFees
+			} else {
+				srcFees = exchange.Fees
+			}
+			newFees := make(map[string]engine.FeeConfig, len(srcFees))
+			for name, f := range srcFees {
+				newFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.SlippageFactor}
+			}
+			eng.SetFees(newFees)
+			liveCfg.Fees = toFeeInfoMap(srcFees)
+		}
+
+		if patch.Fees != nil {
+			for name, fp := range patch.Fees {
+				if fp == nil {
+					continue
+				}
+				cur := liveCfg.Fees[name]
+				if fp.TakerFee != nil {
+					cur.TakerFee = *fp.TakerFee
+				}
+				if fp.Slippage != nil {
+					cur.Slippage = *fp.Slippage
+				}
+				liveCfg.Fees[name] = cur
+			}
+			newFees := make(map[string]engine.FeeConfig, len(liveCfg.Fees))
+			for name, f := range liveCfg.Fees {
+				newFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.Slippage}
+			}
+			eng.SetFees(newFees)
+		}
+
+		return liveCfg
+	}
+
 	// --- Processing loop ---
 
-	go runProcessingLoop(ctx, cfg, agg, eng, rm, exec, hub, st, spreadModels)
+	go runProcessingLoop(ctx, cfg, agg, eng, rm, exec, hub, st, spreadModels, intervalCh)
 
 	// --- HTTP server ---
 
-	apiHandler := server.NewAPIHandler(st, rm, spreadStatsFn, cfg.AllowedOrigin, len(exchangeNames))
+	apiHandler := server.NewAPIHandler(st, rm, spreadStatsFn, getConfigFn, patchConfigFn, cfg.AllowedOrigin, len(exchangeNames))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)
@@ -187,6 +284,7 @@ func runProcessingLoop(
 	hub *server.Hub,
 	st *store.Store,
 	spreadModels map[string]*model.SpreadModel,
+	intervalCh <-chan time.Duration,
 ) {
 	ticker := time.NewTicker(cfg.ExecutionInterval)
 	defer ticker.Stop()
@@ -201,6 +299,9 @@ func runProcessingLoop(
 		case <-ctx.Done():
 			return
 
+		case newInterval := <-intervalCh:
+			ticker.Reset(newInterval)
+
 		case <-snapshotTicker.C:
 			// price_snapshot is unthrottled: carries all exchange prices in one
 			// message so the hub doesn't collapse them into a single entry.
@@ -211,21 +312,7 @@ func runProcessingLoop(
 				return
 			}
 
-			// Feed spread models with the net profit percentage approximation.
-			// Use ask as a proxy spread contribution; the model learns over time.
-			ask, _ := update.Ask.Float64()
-			bid, _ := update.Bid.Float64()
-			if ask > 0 {
-				midSpread := (ask - bid) / ask
-				for key, sm := range spreadModels {
-					// Only update models relevant to this exchange.
-					if containsExchange(key, update.Exchange) {
-						sm.Update(midSpread)
-					}
-				}
-			}
-
-			// Engine processes the update.
+			// Engine processes the update (also updates spread models per pair).
 			eng.ProcessUpdate(update)
 
 			// Publish price_update event to WebSocket clients (throttled by hub).
@@ -289,18 +376,6 @@ func spaHandler(fs http.FileSystem) http.Handler {
 		}
 		fileServer.ServeHTTP(w, r)
 	})
-}
-
-// containsExchange returns true if the pair key "A-B" contains the exchange name.
-func containsExchange(key, exchange string) bool {
-	for i := 0; i < len(key); i++ {
-		if key[i] == '-' {
-			if key[:i] == exchange || key[i+1:] == exchange {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // --- Event publishers ---
@@ -382,4 +457,13 @@ func publishPnL(hub *server.Hub, st *store.Store) {
 		"win_rate":    winRate,
 	})
 	hub.Publish(server.Event{Type: "pnl_update", Data: json.RawMessage(b)})
+}
+
+// toFeeInfoMap converts exchange fee configs to the API response shape.
+func toFeeInfoMap(src map[string]exchange.FeeConfig) map[string]server.FeeInfo {
+	out := make(map[string]server.FeeInfo, len(src))
+	for name, f := range src {
+		out[name] = server.FeeInfo{TakerFee: f.TakerFee, Slippage: f.SlippageFactor}
+	}
+	return out
 }
