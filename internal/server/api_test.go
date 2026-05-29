@@ -305,9 +305,13 @@ func TestAPIConfig_PatchFees(t *testing.T) {
 		},
 	)
 
-	_, body := patchJSON(t, handler, "/api/config",
+	resp, body := patchJSON(t, handler, "/api/config",
 		`{"fees":{"binance":{"taker_fee":0.0005}}}`,
 	)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
 
 	fees, ok := body["fees"].(map[string]interface{})
 	if !ok {
@@ -356,12 +360,22 @@ func TestAPIConfig_PatchFees_SlippageOnly(t *testing.T) {
 		},
 	)
 
-	_, body := patchJSON(t, handler, "/api/config",
+	resp, body := patchJSON(t, handler, "/api/config",
 		`{"fees":{"okx":{"slippage":0.0005}}}`,
 	)
 
-	fees := body["fees"].(map[string]interface{})
-	okx := fees["okx"].(map[string]interface{})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	fees, ok := body["fees"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected fees key in response")
+	}
+	okx, ok := fees["okx"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected fees.okx in response")
+	}
 
 	if okx["taker_fee"].(float64) != 0.001 {
 		t.Errorf("expected taker_fee=0.001 (unchanged), got %v", okx["taker_fee"])
