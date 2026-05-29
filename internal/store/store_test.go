@@ -19,7 +19,7 @@ func newOpp(id string, status types.OpportunityStatus) types.Opportunity {
 
 // TestSaveAndGetByID verifies that an opportunity saved to the store can be retrieved by ID.
 func TestSaveAndGetByID(t *testing.T) {
-	s := NewStore()
+	s := NewStore(t.TempDir())
 	opp := newOpp("abc", types.StatusDetected)
 	s.Save(opp)
 
@@ -37,7 +37,7 @@ func TestSaveAndGetByID(t *testing.T) {
 
 // TestGetByIDUnknown verifies that GetByID returns nil/false for an unknown ID.
 func TestGetByIDUnknown(t *testing.T) {
-	s := NewStore()
+	s := NewStore(t.TempDir())
 	got, ok := s.GetByID("nonexistent")
 	if ok {
 		t.Error("GetByID should return false for unknown ID")
@@ -49,7 +49,7 @@ func TestGetByIDUnknown(t *testing.T) {
 
 // TestQueryByStatusReturnsMatchingOnly verifies QueryByStatus filters correctly.
 func TestQueryByStatusReturnsMatchingOnly(t *testing.T) {
-	s := NewStore()
+	s := NewStore(t.TempDir())
 	s.Save(newOpp("1", types.StatusDetected))
 	s.Save(newOpp("2", types.StatusDetected))
 	s.Save(newOpp("3", types.StatusDetected))
@@ -74,7 +74,7 @@ func TestQueryByStatusReturnsMatchingOnly(t *testing.T) {
 
 // TestSaveTradeAndAllTrades verifies that SaveTrade persists a trade retrievable via AllTrades.
 func TestSaveTradeAndAllTrades(t *testing.T) {
-	s := NewStore()
+	s := NewStore(t.TempDir())
 	trade := types.Trade{
 		ID:            "t1",
 		OpportunityID: "opp1",
@@ -94,7 +94,7 @@ func TestSaveTradeAndAllTrades(t *testing.T) {
 // TestConcurrentInserts spawns 50 goroutines inserting opportunities simultaneously
 // and verifies no data race occurs. Run with -race.
 func TestConcurrentInserts(t *testing.T) {
-	s := NewStore()
+	s := NewStore(t.TempDir())
 	const n = 50
 
 	var wg sync.WaitGroup

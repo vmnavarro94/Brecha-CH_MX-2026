@@ -53,7 +53,7 @@ func TestStaleBuyPriceReturnsError(t *testing.T) {
 	staleTime := now.Add(-3 * time.Second)
 
 	w := wallet.NewMultiWallet([]string{"binance", "kraken"}, map[string]float64{"USDT": 1000.0, "BTC": 1.0})
-	st := store.NewStore()
+	st := store.NewStore(t.TempDir())
 
 	snapshot := map[string]types.PriceUpdate{
 		"binance": makeUpdate("binance", 50000.0, 50100.0, staleTime), // stale
@@ -84,7 +84,7 @@ func TestStaleSellPriceReturnsError(t *testing.T) {
 	staleTime := now.Add(-3 * time.Second)
 
 	w := wallet.NewMultiWallet([]string{"binance", "kraken"}, map[string]float64{"USDT": 1000.0, "BTC": 1.0})
-	st := store.NewStore()
+	st := store.NewStore(t.TempDir())
 
 	snapshot := map[string]types.PriceUpdate{
 		"binance": makeUpdate("binance", 50000.0, 50100.0, now),
@@ -118,7 +118,7 @@ func TestFreshPricesVolume(t *testing.T) {
 		[]string{"binance", "kraken"},
 		map[string]float64{"USDT": 500.0, "BTC": 1.0},
 	)
-	st := store.NewStore()
+	st := store.NewStore(t.TempDir())
 
 	ask := 50000.0
 	bid := 50300.0
@@ -159,7 +159,7 @@ func TestZeroVolumeSkipsExecution(t *testing.T) {
 		[]string{"binance", "kraken"},
 		map[string]float64{"USDT": 0.0, "BTC": 1.0},
 	)
-	st := store.NewStore()
+	st := store.NewStore(t.TempDir())
 
 	snapshot := map[string]types.PriceUpdate{
 		"binance": makeUpdate("binance", 49900.0, 50000.0, now),
@@ -199,7 +199,7 @@ func TestSuccessfulExecutionUpdatesWallets(t *testing.T) {
 		[]string{"binance", "kraken"},
 		map[string]float64{"USDT": initialUSDT, "BTC": initialBTC},
 	)
-	st := store.NewStore()
+	st := store.NewStore(t.TempDir())
 
 	snapshot := map[string]types.PriceUpdate{
 		"binance": makeUpdate("binance", 49900.0, ask, now),
@@ -253,7 +253,7 @@ func TestSuccessfulExecutionSavesTrade(t *testing.T) {
 		[]string{"binance", "kraken"},
 		map[string]float64{"USDT": 1000.0, "BTC": 1.0},
 	)
-	st := store.NewStore()
+	st := store.NewStore(t.TempDir())
 
 	snapshot := map[string]types.PriceUpdate{
 		"binance": makeUpdate("binance", 49900.0, ask, now),
@@ -298,7 +298,7 @@ func TestSuccessfulExecutionUpdatesOpportunityStatus(t *testing.T) {
 		[]string{"binance", "kraken"},
 		map[string]float64{"USDT": 1000.0, "BTC": 1.0},
 	)
-	st := store.NewStore()
+	st := store.NewStore(t.TempDir())
 
 	ask := 50000.0
 	bid := 50300.0
