@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      ALLOWED_ORIGIN: "*"
+      INITIAL_USDT_PER_EXCHANGE: "10000"
+      INITIAL_BTC_PER_EXCHANGE: "0.1"
+      MIN_NET_PROFIT_PCT: "0.0015"
+      MAX_POSITION_USDT: "1000"
+      CIRCUIT_BREAKER_N: "5"
+      CIRCUIT_BREAKER_LOSS_PCT: "-0.005"
+      CIRCUIT_BREAKER_PAUSE_MINUTES: "5"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

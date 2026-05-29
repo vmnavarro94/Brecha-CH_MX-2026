@@ -1,0 +1,10 @@
+.git
+.github
+*.md
+web/node_modules
+"Brecha Design System"
+openspec
+.atl
+.remember
+*.test.go
+dist/
