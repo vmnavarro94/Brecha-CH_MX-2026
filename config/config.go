@@ -14,6 +14,8 @@ type Config struct {
 	BybitWSURL   string
 	OKXWSURL     string
 	GateWSURL    string
+	MEXCWSURL    string
+	BitgetWSURL  string
 
 	MinNetProfitPct    float64
 	MaxPositionUSDT    float64
@@ -42,6 +44,8 @@ func Load() *Config {
 		BybitWSURL:         getEnv("BYBIT_WS_URL", "wss://stream.bybit.com/v5/public/spot"),
 		OKXWSURL:           getEnv("OKX_WS_URL", "wss://ws.okx.com:8443/ws/v5/public"),
 		GateWSURL:          getEnv("GATE_WS_URL", "wss://api.gateio.ws/ws/v4/"),
+		MEXCWSURL:          getEnv("MEXC_WS_URL", "wss://wbs.mexc.com/ws"),
+		BitgetWSURL:        getEnv("BITGET_WS_URL", "wss://ws.bitget.com/v2/ws/public"),
 		MinNetProfitPct:    getEnvFloat("MIN_NET_PROFIT_PCT", 0.0015),
 		MaxPositionUSDT:    getEnvFloat("MAX_POSITION_USDT", 1000),
 		ExecutionInterval:  time.Duration(getEnvInt("EXECUTION_INTERVAL_MS", 100)) * time.Millisecond,

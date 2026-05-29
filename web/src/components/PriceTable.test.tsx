@@ -5,7 +5,7 @@ import PriceTable from './PriceTable'
 
 function resetStore() {
   useMarketStore.setState({
-    prices: { binance: null, kraken: null, bybit: null, okx: null, gate: null },
+    prices: { binance: null, kraken: null, bybit: null, okx: null, gate: null, mexc: null, bitget: null },
   })
 }
 
@@ -19,19 +19,21 @@ describe('PriceTable', () => {
     vi.useRealTimers()
   })
 
-  it('renders 5 rows (binance, kraken, bybit, okx, gate)', () => {
+  it('renders 7 rows (all exchanges)', () => {
     render(<PriceTable />)
     expect(screen.getByText('Binance')).toBeInTheDocument()
     expect(screen.getByText('Kraken')).toBeInTheDocument()
     expect(screen.getByText('Bybit')).toBeInTheDocument()
     expect(screen.getByText('OKX')).toBeInTheDocument()
     expect(screen.getByText('Gate.io')).toBeInTheDocument()
+    expect(screen.getByText('MEXC')).toBeInTheDocument()
+    expect(screen.getByText('Bitget')).toBeInTheDocument()
   })
 
   it('shows "Esperando..." when price is null', () => {
     render(<PriceTable />)
     const waiting = screen.getAllByText('Esperando...')
-    expect(waiting.length).toBeGreaterThanOrEqual(5)
+    expect(waiting.length).toBeGreaterThanOrEqual(7)
   })
 
   it('shows "En vivo" when receivedAt is recent (< 10000ms)', () => {
@@ -43,6 +45,8 @@ describe('PriceTable', () => {
         bybit: null,
         okx: null,
         gate: null,
+        mexc: null,
+        bitget: null,
       },
     })
     render(<PriceTable />)
@@ -58,6 +62,8 @@ describe('PriceTable', () => {
         bybit: null,
         okx: null,
         gate: null,
+        mexc: null,
+        bitget: null,
       },
     })
     render(<PriceTable />)
@@ -73,6 +79,8 @@ describe('PriceTable', () => {
         bybit: null,
         okx: null,
         gate: null,
+        mexc: null,
+        bitget: null,
       },
     })
     render(<PriceTable />)

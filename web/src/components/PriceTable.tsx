@@ -9,6 +9,8 @@ const EX_META: Record<Exchange, { label: string; color: string }> = {
   bybit: { label: 'Bybit', color: '#F7A600' },
   okx: { label: 'OKX', color: '#4086FF' },
   gate: { label: 'Gate.io', color: '#2ECC71' },
+  mexc: { label: 'MEXC', color: '#00C2CB' },
+  bitget: { label: 'Bitget', color: '#FF6B35' },
 }
 
 function px2(n: number): string {

@@ -25,7 +25,7 @@ import (
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/wallet"
 )
 
-var exchangeNames = []string{"binance", "kraken", "bybit", "okx", "gate"}
+var exchangeNames = []string{"binance", "kraken", "bybit", "okx", "gate", "mexc", "bitget"}
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -56,6 +56,8 @@ func main() {
 		exchange.NewBybit(cfg.BybitWSURL),
 		exchange.NewOKX(cfg.OKXWSURL),
 		exchange.NewGate(cfg.GateWSURL),
+		exchange.NewMEXC(cfg.MEXCWSURL),
+		exchange.NewBitget(cfg.BitgetWSURL),
 	}
 
 	agg := feed.NewAggregator(connectors)
@@ -102,8 +104,10 @@ func main() {
 				"binance": {TakerFee: 0.001, SlippageFactor: 0.0002},
 				"kraken":  {TakerFee: 0.0026, SlippageFactor: 0.0003},
 				"bybit":   {TakerFee: 0.001, SlippageFactor: 0.0002},
-				"okx":     {TakerFee: 0.001, SlippageFactor: 0.0002},
-				"gate":    {TakerFee: 0.002, SlippageFactor: 0.0003},
+				"okx":    {TakerFee: 0.001, SlippageFactor: 0.0002},
+				"gate":   {TakerFee: 0.002, SlippageFactor: 0.0003},
+				"mexc":   {TakerFee: 0.002, SlippageFactor: 0.0003},
+				"bitget": {TakerFee: 0.001, SlippageFactor: 0.0002},
 			},
 			MinNetProfitPct:    cfg.MinNetProfitPct,
 			OpportunityTTL:     cfg.OpportunityTTL,
