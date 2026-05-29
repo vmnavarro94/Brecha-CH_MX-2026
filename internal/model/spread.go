@@ -2,6 +2,14 @@ package model
 
 import "math"
 
+// SpreadStats holds a snapshot of a spread model's current statistics for a single pair.
+type SpreadStats struct {
+	Pair    string  `json:"pair"`
+	Mean    float64 `json:"mean"`
+	Std     float64 `json:"std"`
+	Samples int     `json:"samples"`
+}
+
 const (
 	// MinSamples is the minimum number of samples before the model is considered ready.
 	MinSamples = 100
