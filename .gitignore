@@ -1,0 +1,32 @@
+# Binaries
+/server
+*.exe
+*.out
+
+# Go build cache
+/vendor/
+*.test
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Next.js
+web/.next/
+web/out/
+web/node_modules/
+web/.env.local
+
+# Logs
+*.log
