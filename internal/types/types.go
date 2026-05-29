@@ -6,6 +6,17 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// Clock is an interface for obtaining the current time, enabling testable time injection.
+type Clock interface {
+	Now() time.Time
+}
+
+// RealClock is a Clock implementation that returns the actual current time.
+type RealClock struct{}
+
+// Now returns the current wall-clock time.
+func (RealClock) Now() time.Time { return time.Now() }
+
 type PriceUpdate struct {
 	Exchange   string
 	Bid        decimal.Decimal
