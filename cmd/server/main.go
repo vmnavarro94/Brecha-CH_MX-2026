@@ -137,6 +137,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)
 	mux.Handle("/api/", apiHandler)
+	mux.Handle("/", spaHandler(http.Dir("web/dist")))
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -248,6 +249,22 @@ func runProcessingLoop(
 			publishOpportunity(hub, opp)
 		}
 	}
+}
+
+// spaHandler serves static files from root and falls back to index.html for
+// unknown paths so the React router can handle client-side navigation.
+func spaHandler(fs http.FileSystem) http.Handler {
+	fileServer := http.FileServer(fs)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f, err := fs.Open(r.URL.Path)
+		if err != nil {
+			// Path not found — serve SPA entry point.
+			r.URL.Path = "/"
+		} else {
+			f.Close()
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
 // containsExchange returns true if the pair key "A-B" contains the exchange name.

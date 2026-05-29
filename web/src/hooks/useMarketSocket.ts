@@ -2,8 +2,12 @@ import { useEffect, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
 import type { ServerEvent } from '../types/api'
 
-const WS_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8080/ws'
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8080'
+function getWsUrl(): string {
+  if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.host}/ws`
+}
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 const MAX_BACKOFF = 30_000
 
 export function useMarketSocket() {
@@ -25,7 +29,7 @@ export function useMarketSocket() {
   }
 
   function connect() {
-    const ws = new WebSocket(WS_URL)
+    const ws = new WebSocket(getWsUrl())
     wsRef.current = ws
 
     ws.onopen = () => {
