@@ -206,6 +206,9 @@ func runProcessingLoop(
 			// Publish price_update event to WebSocket clients (throttled by hub).
 			publishPriceUpdate(hub, update)
 
+			// Publish spread_stats so clients can compute z-scores (throttled by hub).
+			publishSpreadStats(hub, spreadModels)
+
 		case <-ticker.C:
 			// Attempt to execute the top-scoring opportunity.
 			opp, ok := eng.DequeueTop()
@@ -285,6 +288,19 @@ func publishCircuitBreaker(hub *server.Hub, rm *risk.RiskManager) {
 		Type: "circuit_breaker",
 		Data: map[string]string{"state": rm.State().String()},
 	})
+}
+
+func publishSpreadStats(hub *server.Hub, spreadModels map[string]*model.SpreadModel) {
+	result := make([]model.SpreadStats, 0, len(spreadModels))
+	for k, m := range spreadModels {
+		result = append(result, model.SpreadStats{
+			Pair:    k,
+			Mean:    m.Mean(),
+			Std:     m.Std(),
+			Samples: m.N(),
+		})
+	}
+	hub.Publish(server.Event{Type: "spread_stats", Data: result})
 }
 
 func publishPnL(hub *server.Hub, st *store.Store) {
