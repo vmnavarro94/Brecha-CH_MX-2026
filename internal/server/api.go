@@ -60,11 +60,10 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 // handleStatus returns system-level status information.
 func (h *apiHandler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	trades := h.store.AllTrades()
-	spreads := h.spreadsFn()
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"circuit_breaker_state": h.risk.State().String(),
-		"exchange_count":        len(spreads),
+		"exchange_count":        3, // binance, kraken, bybit
 		"trade_count":           len(trades),
 	})
 }

@@ -13,6 +13,9 @@ services:
       CIRCUIT_BREAKER_N: "5"
       CIRCUIT_BREAKER_LOSS_PCT: "-0.005"
       CIRCUIT_BREAKER_PAUSE_MINUTES: "5"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/status"]
