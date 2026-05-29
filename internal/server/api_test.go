@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func (f fakeClock) Now() time.Time { return f.t }
 
 func newTestComponents(t *testing.T) (*store.Store, *risk.RiskManager) {
 	t.Helper()
-	st := store.NewStore()
+	st := store.NewStore("")
 	rm := risk.NewRiskManager(risk.Config{
 		MinNetProfitPct:  0.0015,
 		MaxPositionUSDT:  1000,
@@ -38,7 +39,44 @@ func newTestComponents(t *testing.T) (*store.Store, *risk.RiskManager) {
 
 func newAPI(t *testing.T, st *store.Store, rm *risk.RiskManager, spreadsFn func() map[string]model.SpreadStats) http.Handler {
 	t.Helper()
-	return server.NewAPIHandler(st, rm, spreadsFn, "http://localhost:3000", 3)
+	noop := server.ConfigSnapshot{}
+	return server.NewAPIHandler(
+		st, rm, spreadsFn,
+		func() server.ConfigSnapshot { return noop },
+		func(server.ConfigPatch) server.ConfigSnapshot { return noop },
+		"http://localhost:3000", 3,
+	)
+}
+
+func newAPIWithConfigFn(
+	t *testing.T,
+	st *store.Store,
+	rm *risk.RiskManager,
+	getCfg func() server.ConfigSnapshot,
+	patchCfg func(server.ConfigPatch) server.ConfigSnapshot,
+) http.Handler {
+	t.Helper()
+	return server.NewAPIHandler(
+		st, rm,
+		func() map[string]model.SpreadStats { return nil },
+		getCfg,
+		patchCfg,
+		"http://localhost:3000", 3,
+	)
+}
+
+func patchJSON(t *testing.T, handler http.Handler, path string, body string) (*http.Response, map[string]interface{}) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPatch, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+	var v map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	return resp, v
 }
 
 func getJSON(t *testing.T, handler http.Handler, path string) (*http.Response, map[string]interface{}) {
@@ -231,5 +269,104 @@ func TestAPIStatus_CORSHeader(t *testing.T) {
 	origin := w.Header().Get("Access-Control-Allow-Origin")
 	if origin != "http://localhost:3000" {
 		t.Errorf("expected CORS origin=http://localhost:3000, got %q", origin)
+	}
+}
+
+// --- PATCH /api/config (fees) ---
+
+func TestAPIConfig_PatchFees(t *testing.T) {
+	st, rm := newTestComponents(t)
+
+	snap := server.ConfigSnapshot{
+		Fees: map[string]server.FeeInfo{
+			"binance": {TakerFee: 0.001, Slippage: 0.0002},
+		},
+	}
+
+	handler := newAPIWithConfigFn(t, st, rm,
+		func() server.ConfigSnapshot { return snap },
+		func(p server.ConfigPatch) server.ConfigSnapshot {
+			if p.Fees != nil {
+				for name, fp := range p.Fees {
+					if fp == nil {
+						continue
+					}
+					cur := snap.Fees[name]
+					if fp.TakerFee != nil {
+						cur.TakerFee = *fp.TakerFee
+					}
+					if fp.Slippage != nil {
+						cur.Slippage = *fp.Slippage
+					}
+					snap.Fees[name] = cur
+				}
+			}
+			return snap
+		},
+	)
+
+	_, body := patchJSON(t, handler, "/api/config",
+		`{"fees":{"binance":{"taker_fee":0.0005}}}`,
+	)
+
+	fees, ok := body["fees"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected fees key in response")
+	}
+	binance, ok := fees["binance"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected fees.binance in response")
+	}
+	if binance["taker_fee"].(float64) != 0.0005 {
+		t.Errorf("expected taker_fee=0.0005, got %v", binance["taker_fee"])
+	}
+	if binance["slippage"].(float64) != 0.0002 {
+		t.Errorf("expected slippage=0.0002 (unchanged), got %v", binance["slippage"])
+	}
+}
+
+func TestAPIConfig_PatchFees_SlippageOnly(t *testing.T) {
+	st, rm := newTestComponents(t)
+
+	snap := server.ConfigSnapshot{
+		Fees: map[string]server.FeeInfo{
+			"okx": {TakerFee: 0.001, Slippage: 0.0002},
+		},
+	}
+
+	handler := newAPIWithConfigFn(t, st, rm,
+		func() server.ConfigSnapshot { return snap },
+		func(p server.ConfigPatch) server.ConfigSnapshot {
+			if p.Fees != nil {
+				for name, fp := range p.Fees {
+					if fp == nil {
+						continue
+					}
+					cur := snap.Fees[name]
+					if fp.TakerFee != nil {
+						cur.TakerFee = *fp.TakerFee
+					}
+					if fp.Slippage != nil {
+						cur.Slippage = *fp.Slippage
+					}
+					snap.Fees[name] = cur
+				}
+			}
+			return snap
+		},
+	)
+
+	_, body := patchJSON(t, handler, "/api/config",
+		`{"fees":{"okx":{"slippage":0.0005}}}`,
+	)
+
+	fees := body["fees"].(map[string]interface{})
+	okx := fees["okx"].(map[string]interface{})
+
+	if okx["taker_fee"].(float64) != 0.001 {
+		t.Errorf("expected taker_fee=0.001 (unchanged), got %v", okx["taker_fee"])
+	}
+	if okx["slippage"].(float64) != 0.0005 {
+		t.Errorf("expected slippage=0.0005, got %v", okx["slippage"])
 	}
 }

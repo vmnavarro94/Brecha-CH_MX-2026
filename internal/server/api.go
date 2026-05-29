@@ -12,11 +12,51 @@ import (
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
+// FeeInfo holds the active taker fee and slippage for a single exchange.
+type FeeInfo struct {
+	TakerFee float64 `json:"taker_fee"`
+	Slippage  float64 `json:"slippage"`
+}
+
+// ConfigSnapshot holds the current values for all mutable demo parameters.
+type ConfigSnapshot struct {
+	DemoMode             bool               `json:"demo_mode"`
+	MinNetProfitPct      float64            `json:"min_net_profit_pct"`
+	MaxPositionUSDT      float64            `json:"max_position_usdt"`
+	StalenessThresholdMs int                `json:"staleness_threshold_ms"`
+	ExecutionIntervalMs  int                `json:"execution_interval_ms"`
+	CircuitBreakerN      int                `json:"circuit_breaker_n"`
+	CircuitBreakerLossPct float64           `json:"circuit_breaker_loss_pct"`
+	Fees                 map[string]FeeInfo `json:"fees"`
+}
+
+// ConfigPatch carries a partial update for mutable demo parameters.
+// Only non-nil fields are applied.
+type ConfigPatch struct {
+	DemoMode              *bool                    `json:"demo_mode"`
+	MinNetProfitPct       *float64                 `json:"min_net_profit_pct"`
+	MaxPositionUSDT       *float64                 `json:"max_position_usdt"`
+	StalenessThresholdMs  *int                     `json:"staleness_threshold_ms"`
+	ExecutionIntervalMs   *int                     `json:"execution_interval_ms"`
+	CircuitBreakerN       *int                     `json:"circuit_breaker_n"`
+	CircuitBreakerLossPct *float64                 `json:"circuit_breaker_loss_pct"`
+	Fees                  map[string]*FeeInfoPatch `json:"fees,omitempty"`
+}
+
+// FeeInfoPatch carries a partial update for a single exchange's fee config.
+// Only non-nil fields are applied; the other field keeps its current value.
+type FeeInfoPatch struct {
+	TakerFee *float64 `json:"taker_fee,omitempty"`
+	Slippage *float64 `json:"slippage,omitempty"`
+}
+
 // apiHandler holds dependencies for the REST API.
 type apiHandler struct {
 	store         *store.Store
 	risk          *risk.RiskManager
 	spreadsFn     func() map[string]model.SpreadStats
+	getConfigFn   func() ConfigSnapshot
+	patchConfigFn func(ConfigPatch) ConfigSnapshot
 	allowedOrigin string
 	exchangeCount int
 	mux           *http.ServeMux
@@ -24,10 +64,13 @@ type apiHandler struct {
 
 // NewAPIHandler creates an http.Handler that serves all /api/* routes.
 // spreadsFn is called on each /api/spreads request to get current per-pair statistics.
+// getConfigFn and patchConfigFn power the /api/config endpoint.
 func NewAPIHandler(
 	st *store.Store,
 	rm *risk.RiskManager,
 	spreadsFn func() map[string]model.SpreadStats,
+	getConfigFn func() ConfigSnapshot,
+	patchConfigFn func(ConfigPatch) ConfigSnapshot,
 	allowedOrigin string,
 	exchangeCount int,
 ) http.Handler {
@@ -35,6 +78,8 @@ func NewAPIHandler(
 		store:         st,
 		risk:          rm,
 		spreadsFn:     spreadsFn,
+		getConfigFn:   getConfigFn,
+		patchConfigFn: patchConfigFn,
 		allowedOrigin: allowedOrigin,
 		exchangeCount: exchangeCount,
 		mux:           http.NewServeMux(),
@@ -44,6 +89,7 @@ func NewAPIHandler(
 	h.mux.HandleFunc("/api/opportunities", h.handleOpportunities)
 	h.mux.HandleFunc("/api/pnl", h.handlePnL)
 	h.mux.HandleFunc("/api/spreads", h.handleSpreads)
+	h.mux.HandleFunc("/api/config", h.handleConfig)
 	return h
 }
 
@@ -143,6 +189,28 @@ func (h *apiHandler) handleSpreads(w http.ResponseWriter, r *http.Request) {
 		result = append(result, s)
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// handleConfig handles GET and PATCH /api/config for live parameter tweaking.
+func (h *apiHandler) handleConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Methods", "GET, PATCH, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	switch r.Method {
+	case http.MethodOptions:
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, h.getConfigFn())
+	case http.MethodPatch:
+		var patch ConfigPatch
+		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+			return
+		}
+		writeJSON(w, http.StatusOK, h.patchConfigFn(patch))
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
 }
 
 // paginate slices the elements [0, total) according to ?limit= and ?offset= query params
