@@ -21,13 +21,13 @@ const (
 func (s State) String() string {
 	switch s {
 	case StateActive:
-		return "Active"
+		return "active"
 	case StateWatching:
-		return "Watching"
+		return "watching"
 	case StatePaused:
-		return "Paused"
+		return "paused"
 	default:
-		return "Unknown"
+		return "unknown"
 	}
 }
 

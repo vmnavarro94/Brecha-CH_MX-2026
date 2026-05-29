@@ -91,8 +91,8 @@ func TestAPIStatus_CircuitBreakerState(t *testing.T) {
 
 	_, body := getJSON(t, handler, "/api/status")
 
-	if body["circuit_breaker_state"] != "Active" {
-		t.Errorf("expected circuit_breaker_state=Active, got %v", body["circuit_breaker_state"])
+	if body["circuit_breaker_state"] != "active" {
+		t.Errorf("expected circuit_breaker_state=active, got %v", body["circuit_breaker_state"])
 	}
 }
 
