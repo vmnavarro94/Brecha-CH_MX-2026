@@ -11,6 +11,9 @@ const EX_META: Record<Exchange, { label: string; color: string }> = {
   gate: { label: 'Gate.io', color: '#2ECC71' },
   mexc: { label: 'MEXC', color: '#00C2CB' },
   bitget: { label: 'Bitget', color: '#FF6B35' },
+  htx: { label: 'HTX', color: '#1F89E5' },
+  cryptocom: { label: 'Crypto.com', color: '#002D74' },
+  kucoin: { label: 'KuCoin', color: '#24AE8F' },
 }
 
 function px2(n: number): string {

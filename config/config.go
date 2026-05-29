@@ -14,8 +14,11 @@ type Config struct {
 	BybitWSURL   string
 	OKXWSURL     string
 	GateWSURL    string
-	MEXCWSURL    string
-	BitgetWSURL  string
+	MEXCWSURL       string
+	BitgetWSURL     string
+	HTXWSURL        string
+	CryptoComWSURL  string
+	KuCoinAPIURL    string
 
 	MinNetProfitPct    float64
 	MaxPositionUSDT    float64
@@ -46,6 +49,9 @@ func Load() *Config {
 		GateWSURL:          getEnv("GATE_WS_URL", "wss://api.gateio.ws/ws/v4/"),
 		MEXCWSURL:          getEnv("MEXC_WS_URL", "wss://wbs.mexc.com/ws"),
 		BitgetWSURL:        getEnv("BITGET_WS_URL", "wss://ws.bitget.com/v2/ws/public"),
+		HTXWSURL:           getEnv("HTX_WS_URL", "wss://api.huobi.pro/ws"),
+		CryptoComWSURL:     getEnv("CRYPTOCOM_WS_URL", "wss://stream.crypto.com/exchange/v1/market"),
+		KuCoinAPIURL:       getEnv("KUCOIN_API_URL", "https://api.kucoin.com"),
 		MinNetProfitPct:    getEnvFloat("MIN_NET_PROFIT_PCT", 0.0015),
 		MaxPositionUSDT:    getEnvFloat("MAX_POSITION_USDT", 1000),
 		ExecutionInterval:  time.Duration(getEnvInt("EXECUTION_INTERVAL_MS", 100)) * time.Millisecond,

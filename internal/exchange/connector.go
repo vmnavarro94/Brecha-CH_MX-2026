@@ -27,8 +27,11 @@ var Fees = map[string]FeeConfig{
 	"bybit":   {TakerFee: 0.001, SlippageFactor: 0.0002},
 	"okx":    {TakerFee: 0.001, SlippageFactor: 0.0002},
 	"gate":   {TakerFee: 0.002, SlippageFactor: 0.0003},
-	"mexc":   {TakerFee: 0.002, SlippageFactor: 0.0003},
-	"bitget": {TakerFee: 0.001, SlippageFactor: 0.0002},
+	"mexc":      {TakerFee: 0.002, SlippageFactor: 0.0003},
+	"bitget":    {TakerFee: 0.001, SlippageFactor: 0.0002},
+	"htx":       {TakerFee: 0.002, SlippageFactor: 0.0003},
+	"cryptocom": {TakerFee: 0.0007, SlippageFactor: 0.0002},
+	"kucoin":    {TakerFee: 0.001, SlippageFactor: 0.0002},
 }
 
 func backoff(attempt int) time.Duration {

@@ -25,7 +25,7 @@ import (
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/wallet"
 )
 
-var exchangeNames = []string{"binance", "kraken", "bybit", "okx", "gate", "mexc", "bitget"}
+var exchangeNames = []string{"binance", "kraken", "bybit", "okx", "gate", "mexc", "bitget", "htx", "cryptocom", "kucoin"}
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -58,6 +58,9 @@ func main() {
 		exchange.NewGate(cfg.GateWSURL),
 		exchange.NewMEXC(cfg.MEXCWSURL),
 		exchange.NewBitget(cfg.BitgetWSURL),
+		exchange.NewHTX(cfg.HTXWSURL),
+		exchange.NewCryptoCom(cfg.CryptoComWSURL),
+		exchange.NewKuCoin(cfg.KuCoinAPIURL),
 	}
 
 	agg := feed.NewAggregator(connectors)
@@ -106,8 +109,11 @@ func main() {
 				"bybit":   {TakerFee: 0.001, SlippageFactor: 0.0002},
 				"okx":    {TakerFee: 0.001, SlippageFactor: 0.0002},
 				"gate":   {TakerFee: 0.002, SlippageFactor: 0.0003},
-				"mexc":   {TakerFee: 0.002, SlippageFactor: 0.0003},
-				"bitget": {TakerFee: 0.001, SlippageFactor: 0.0002},
+				"mexc":      {TakerFee: 0.002, SlippageFactor: 0.0003},
+				"bitget":    {TakerFee: 0.001, SlippageFactor: 0.0002},
+				"htx":       {TakerFee: 0.002, SlippageFactor: 0.0003},
+				"cryptocom": {TakerFee: 0.0007, SlippageFactor: 0.0002},
+				"kucoin":    {TakerFee: 0.001, SlippageFactor: 0.0002},
 			},
 			MinNetProfitPct:    cfg.MinNetProfitPct,
 			OpportunityTTL:     cfg.OpportunityTTL,

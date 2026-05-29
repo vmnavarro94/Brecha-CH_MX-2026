@@ -5,7 +5,7 @@ import PriceTable from './PriceTable'
 
 function resetStore() {
   useMarketStore.setState({
-    prices: { binance: null, kraken: null, bybit: null, okx: null, gate: null, mexc: null, bitget: null },
+    prices: { binance: null, kraken: null, bybit: null, okx: null, gate: null, mexc: null, bitget: null, htx: null, cryptocom: null, kucoin: null },
   })
 }
 
@@ -19,7 +19,7 @@ describe('PriceTable', () => {
     vi.useRealTimers()
   })
 
-  it('renders 7 rows (all exchanges)', () => {
+  it('renders 10 rows (all exchanges)', () => {
     render(<PriceTable />)
     expect(screen.getByText('Binance')).toBeInTheDocument()
     expect(screen.getByText('Kraken')).toBeInTheDocument()
@@ -28,12 +28,15 @@ describe('PriceTable', () => {
     expect(screen.getByText('Gate.io')).toBeInTheDocument()
     expect(screen.getByText('MEXC')).toBeInTheDocument()
     expect(screen.getByText('Bitget')).toBeInTheDocument()
+    expect(screen.getByText('HTX')).toBeInTheDocument()
+    expect(screen.getByText('Crypto.com')).toBeInTheDocument()
+    expect(screen.getByText('KuCoin')).toBeInTheDocument()
   })
 
   it('shows "Esperando..." when price is null', () => {
     render(<PriceTable />)
     const waiting = screen.getAllByText('Esperando...')
-    expect(waiting.length).toBeGreaterThanOrEqual(7)
+    expect(waiting.length).toBeGreaterThanOrEqual(10)
   })
 
   it('shows "En vivo" when receivedAt is recent (< 10000ms)', () => {
@@ -47,6 +50,9 @@ describe('PriceTable', () => {
         gate: null,
         mexc: null,
         bitget: null,
+        htx: null,
+        cryptocom: null,
+        kucoin: null,
       },
     })
     render(<PriceTable />)
@@ -64,6 +70,9 @@ describe('PriceTable', () => {
         gate: null,
         mexc: null,
         bitget: null,
+        htx: null,
+        cryptocom: null,
+        kucoin: null,
       },
     })
     render(<PriceTable />)
@@ -81,6 +90,9 @@ describe('PriceTable', () => {
         gate: null,
         mexc: null,
         bitget: null,
+        htx: null,
+        cryptocom: null,
+        kucoin: null,
       },
     })
     render(<PriceTable />)
