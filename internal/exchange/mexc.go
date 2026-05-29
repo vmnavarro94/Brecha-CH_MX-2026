@@ -95,6 +95,13 @@ func (m *MEXC) run(ctx context.Context) error {
 			return err
 		}
 
+		// MEXC server sends {"msg":"PING"} every ~20s; must respond with {"msg":"PONG"}.
+		var ping struct{ Msg string `json:"msg"` }
+		if json.Unmarshal(msg, &ping) == nil && ping.Msg == "PING" {
+			conn.WriteJSON(map[string]string{"msg": "PONG"}) //nolint:errcheck
+			continue
+		}
+
 		// MEXC bookTicker v3 format:
 		// {"c":"spot@public.bookTicker.v3.api@BTCUSDT","d":{"b":"...","B":"...","a":"...","A":"..."}}
 		var envelope struct {

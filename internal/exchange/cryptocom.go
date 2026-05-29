@@ -111,7 +111,8 @@ func (c *CryptoCom) run(ctx context.Context) error {
 			continue
 		}
 
-		if raw.Method != "subscribe" || raw.Result.Channel != "ticker.BTC_USDT" {
+		// Accept data regardless of method field; just require correct channel and data.
+		if raw.Result.Channel != "ticker.BTC_USDT" {
 			continue
 		}
 		if len(raw.Result.Data) == 0 {

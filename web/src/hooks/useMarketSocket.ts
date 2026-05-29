@@ -43,6 +43,9 @@ export function useMarketSocket() {
       try { ev = JSON.parse(e.data) } catch { return }
       switch (ev.type) {
         case 'price_update':    store.setPrices(ev.data); break
+        case 'price_snapshot':
+          for (const raw of Object.values(ev.data)) store.setPrices(raw)
+          break
         case 'opportunity':     store.addOpportunity(ev.data); break
         case 'trade_executed':  store.addTrade(ev.data); break
         case 'pnl_update':      store.setPnL(ev.data); break

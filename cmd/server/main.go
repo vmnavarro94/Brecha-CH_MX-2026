@@ -202,9 +202,9 @@ func runProcessingLoop(
 			return
 
 		case <-snapshotTicker.C:
-			for _, u := range agg.Snapshot() {
-				publishPriceUpdate(hub, u)
-			}
+			// price_snapshot is unthrottled: carries all exchange prices in one
+			// message so the hub doesn't collapse them into a single entry.
+			publishPriceSnapshot(hub, agg)
 
 		case update, ok := <-agg.Updates():
 			if !ok {
@@ -314,6 +314,24 @@ func publishPriceUpdate(hub *server.Hub, u types.PriceUpdate) {
 			"ask":      u.Ask,
 		},
 	})
+}
+
+// publishPriceSnapshot sends all known exchange prices in a single unthrottled
+// event so the hub does not collapse per-exchange updates into one entry.
+func publishPriceSnapshot(hub *server.Hub, agg *feed.Aggregator) {
+	snapshot := agg.Snapshot()
+	if len(snapshot) == 0 {
+		return
+	}
+	data := make(map[string]interface{}, len(snapshot))
+	for name, u := range snapshot {
+		data[name] = map[string]interface{}{
+			"exchange": u.Exchange,
+			"bid":      u.Bid.String(),
+			"ask":      u.Ask.String(),
+		}
+	}
+	hub.Publish(server.Event{Type: "price_snapshot", Data: data})
 }
 
 func publishOpportunity(hub *server.Hub, opp *types.Opportunity) {

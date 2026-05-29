@@ -1,5 +1,5 @@
 import { TrendingUp } from 'lucide-react'
-import { useMarketStore } from '../store/marketStore'
+import { useMarketStore, EXCHANGES } from '../store/marketStore'
 import { fmtSigned } from '../utils/format'
 
 const CB_MAP = {
@@ -198,9 +198,11 @@ export default function StatusBar() {
   const winRate = useMarketStore((s) => s.pnl.win_rate)
   const tradeCount = useMarketStore((s) => s.trades.length)
   const wsConnected = useMarketStore((s) => s.wsConnected)
+  const prices = useMarketStore((s) => s.prices)
   const execCount = useMarketStore((s) =>
     s.opportunities.filter((o) => o.Status === 'executed').length
   )
+  const activeCount = EXCHANGES.filter((ex) => prices[ex] !== null).length
 
   const cbInfo = CB_MAP[cb] ?? CB_MAP.active
   const pnlCls: 'is-up' | 'is-down' | 'is-flat' =
@@ -249,7 +251,7 @@ export default function StatusBar() {
         <div style={styles.stat}>
           <span style={styles.statKey}>Exchanges</span>
           <span style={styles.statValue}>
-            3<small style={{ fontSize: '11px', color: 'var(--fg-3)' }}> / 3</small>
+            {activeCount}<small style={{ fontSize: '11px', color: 'var(--fg-3)' }}> / {EXCHANGES.length}</small>
           </span>
         </div>
         <div style={styles.stat}>

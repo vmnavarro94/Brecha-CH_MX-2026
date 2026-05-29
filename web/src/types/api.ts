@@ -98,6 +98,7 @@ export interface RawTrade {
 
 export type ServerEvent =
   | { type: 'price_update'; data: RawPriceUpdate }
+  | { type: 'price_snapshot'; data: Record<string, RawPriceUpdate> }
   | { type: 'opportunity'; data: RawOpportunity }
   | { type: 'trade_executed'; data: RawTrade }
   | { type: 'pnl_update'; data: { total_pnl: string; trade_count: number; win_rate: number } }

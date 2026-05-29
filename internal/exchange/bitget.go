@@ -95,6 +95,12 @@ func (b *Bitget) run(ctx context.Context) error {
 			return err
 		}
 
+		// Bitget server sends plain "ping" text; must respond with plain "pong".
+		if string(msg) == "ping" {
+			conn.WriteMessage(websocket.TextMessage, []byte("pong")) //nolint:errcheck
+			continue
+		}
+
 		// Bitget books1 format:
 		// {"action":"snapshot","arg":{...},"data":[{"asks":[["price","qty"]],"bids":[["price","qty"]],"ts":"..."}]}
 		var envelope struct {
