@@ -1,0 +1,142 @@
+@import './styles/tokens.css';
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.55;
+  overflow: hidden;
+  height: 100vh;
+}
+
+.bx-app {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.bx-rail {
+  width: 60px;
+  min-width: 60px;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--line-faint);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--sp-3) 0;
+  gap: var(--sp-2);
+  backdrop-filter: blur(8px);
+}
+
+.bx-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.bx-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--sp-4);
+}
+
+.bx-cockpit {
+  display: grid;
+  grid-template-columns: 1.52fr 1fr;
+  gap: 14px;
+  max-width: 1720px;
+}
+
+.bx-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.bx-fullrow {
+  margin-top: 14px;
+}
+
+.bx-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.bx-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 15px;
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.bx-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+
+/* Rail item */
+.bx-rail-item {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-md);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--fg-3);
+  position: relative;
+  transition: background var(--dur-fast), color var(--dur-fast);
+}
+
+.bx-rail-item:hover {
+  background: var(--bg-elevated);
+  color: var(--fg-1);
+}
+
+.bx-rail-item.active {
+  background: var(--orange-wash);
+  color: var(--orange);
+  box-shadow: inset 3px 0 0 var(--orange);
+}
+
+/* Tooltip */
+.bx-rail-tip {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 4px 8px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--fg-1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast);
+  z-index: 100;
+  box-shadow: var(--shadow-md);
+}
+
+.bx-rail-item:hover .bx-rail-tip {
+  opacity: 1;
+}
