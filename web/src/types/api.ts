@@ -104,3 +104,4 @@ export type ServerEvent =
   | { type: 'pnl_update'; data: { total_pnl: string; trade_count: number; win_rate: number } }
   | { type: 'circuit_breaker'; data: { state: CircuitBreakerState } }
   | { type: 'spread_stats'; data: SpreadStats[] }
+  | { type: 'latency_stats'; data: { p50_us: number; p99_us: number; samples: number } }

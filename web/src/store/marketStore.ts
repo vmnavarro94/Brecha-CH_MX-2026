@@ -6,7 +6,16 @@ import type {
 import type { RawOpportunity, RawTrade, RawPriceUpdate } from '../types/api'
 
 export const EXCHANGES: Exchange[] = ['binance', 'kraken', 'bybit', 'okx', 'gate', 'mexc', 'bitget', 'htx', 'cryptocom', 'kucoin']
-export const FEATURED_PAIRS = ['binance-okx', 'binance-bybit', 'okx-bybit']
+
+const PAIR_COLORS = ['var(--orange)', 'var(--info)', 'var(--up)', 'var(--fg-2)']
+const DEFAULT_FEATURED = ['binance-okx', 'binance-bybit', 'okx-bybit']
+
+export function pairColor(pair: string, featuredPairs: string[]): string {
+  const i = featuredPairs.indexOf(pair)
+  return PAIR_COLORS[i >= 0 ? i : 0]
+}
+
+/** @deprecated use pairColor(pair, featuredPairs) */
 export const PAIR_COLOR: Record<string, string> = {
   'binance-okx': 'var(--orange)',
   'binance-bybit': 'var(--info)',
@@ -16,16 +25,24 @@ export const PAIR_COLOR: Record<string, string> = {
 export interface ZPoint { t: number; z: number }
 export interface TradeMark { t: number; z: number; profit: number }
 
+export interface LatencySummary {
+  p50: number
+  p99: number
+  samples: number
+}
+
 interface MarketState {
   prices: Record<Exchange, PriceData | null>
   opportunities: Opportunity[]
   trades: Trade[]
   pnlHistory: Array<{ time: number; value: number }>
   spreads: SpreadStats[]
+  featuredPairs: string[]
   zSeries: Record<string, ZPoint[]>
   tradeMarks: Record<string, TradeMark[]>
   circuitBreakerState: CircuitBreakerState
   pnl: PnLSummary
+  latency: LatencySummary
   wsConnected: boolean
   lastTradeId: string | null
   lastOppId: string | null
@@ -38,11 +55,11 @@ interface MarketActions {
   setTrades: (raws: RawTrade[]) => void
   setPnL: (summary: { total_pnl: string; trade_count: number; win_rate: number }) => void
   setSpreads: (stats: SpreadStats[]) => void
+  setLatency: (p50: number, p99: number, samples: number) => void
   setCircuitBreakerState: (state: CircuitBreakerState) => void
   setWsConnected: (connected: boolean) => void
 }
 
-// Parse a raw opportunity's string decimals to numbers
 function parseOpportunity(raw: RawOpportunity): Opportunity {
   return {
     ...raw,
@@ -70,7 +87,8 @@ function parseTrade(raw: RawTrade): Trade {
   }
 }
 
-// Compute z-score for a pair given current prices and spread stats
+// Compute z-score for a pair given current prices and spread stats.
+// spread direction: (sellBid - buyAsk) / buyAsk — matches backend model.
 function computeZ(
   prices: Record<Exchange, PriceData | null>,
   pair: string,
@@ -80,8 +98,18 @@ function computeZ(
   const pa = prices[buyEx]
   const pb = prices[sellEx]
   if (!pa || !pb || stat.Std <= 0) return 0
-  const spread = (pa.ask - pb.bid) / pa.ask
+  const spread = (pb.bid - pa.ask) / pa.ask
   return Math.max(-3.6, Math.min(3.6, (spread - stat.Mean) / stat.Std))
+}
+
+// Pick top N pairs by std, requiring minSamples. Falls back to defaults if not enough.
+function pickFeaturedPairs(stats: SpreadStats[], n = 3, minSamples = 50): string[] {
+  const candidates = stats
+    .filter((s) => s.Samples >= minSamples && s.Std > 0)
+    .sort((a, b) => b.Std - a.Std)
+    .slice(0, n)
+    .map((s) => s.Pair)
+  return candidates.length === n ? candidates : DEFAULT_FEATURED
 }
 
 const WINDOW_MS = 60_000
@@ -92,25 +120,38 @@ export const useMarketStore = create<MarketState & MarketActions>((set, _get) =>
   trades: [],
   pnlHistory: [],
   spreads: [],
+  featuredPairs: DEFAULT_FEATURED,
   zSeries: {},
   tradeMarks: {},
   circuitBreakerState: 'active',
   pnl: { total_pnl: 0, trade_count: 0, win_rate: 0 },
+  latency: { p50: 0, p99: 0, samples: 0 },
   wsConnected: false,
   lastTradeId: null,
   lastOppId: null,
 
-  setPrices: (raw) => set((s) => ({
-    prices: {
+  setPrices: (raw) => set((s) => {
+    const now = Date.now()
+    const cutoff = now - WINDOW_MS
+    const updatedPrices = {
       ...s.prices,
       [raw.exchange]: {
         exchange: raw.exchange,
         bid: parseFloat(raw.bid),
         ask: parseFloat(raw.ask),
-        receivedAt: Date.now(),
+        receivedAt: now,
       },
-    },
-  })),
+    }
+    const zSeries = { ...s.zSeries }
+    for (const pair of s.featuredPairs) {
+      const stat = s.spreads.find((sp) => sp.Pair === pair)
+      if (!stat || stat.Std <= 0) continue
+      const z = computeZ(updatedPrices, pair, stat)
+      const existing = (zSeries[pair] ?? []).filter((p) => p.t > cutoff)
+      zSeries[pair] = [...existing, { t: now, z }]
+    }
+    return { prices: updatedPrices, zSeries }
+  }),
 
   addOpportunity: (raw) => set((s) => {
     const opp = parseOpportunity(raw)
@@ -121,9 +162,8 @@ export const useMarketStore = create<MarketState & MarketActions>((set, _get) =>
   addTrade: (raw) => set((s) => {
     const trade = parseTrade(raw)
     const trades = [trade, ...s.trades]
-    // Update trade marks for featured pairs
     const tradeMarks = { ...s.tradeMarks }
-    for (const pair of FEATURED_PAIRS) {
+    for (const pair of s.featuredPairs) {
       const [buyEx, sellEx] = pair.split('-') as [Exchange, Exchange]
       if (trade.BuyExchange === buyEx && trade.SellExchange === sellEx) {
         const stat = s.spreads.find((sp) => sp.Pair === pair)
@@ -155,16 +195,18 @@ export const useMarketStore = create<MarketState & MarketActions>((set, _get) =>
   setSpreads: (stats) => set((s) => {
     const now = Date.now()
     const cutoff = now - WINDOW_MS
+    const featured = pickFeaturedPairs(stats)
     const zSeries = { ...s.zSeries }
     for (const stat of stats) {
-      if (!FEATURED_PAIRS.includes(stat.Pair)) continue
+      if (!featured.includes(stat.Pair)) continue
       const z = computeZ(s.prices, stat.Pair, stat)
       const existing = (zSeries[stat.Pair] ?? []).filter((p) => p.t > cutoff)
       zSeries[stat.Pair] = [...existing, { t: now, z }]
     }
-    return { spreads: stats, zSeries }
+    return { spreads: stats, featuredPairs: featured, zSeries }
   }),
 
+  setLatency: (p50, p99, samples) => set({ latency: { p50, p99, samples } }),
   setCircuitBreakerState: (state) => set({ circuitBreakerState: state }),
   setWsConnected: (connected) => set({ wsConnected: connected }),
 }))
