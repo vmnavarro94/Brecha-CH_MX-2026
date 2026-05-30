@@ -108,6 +108,7 @@ func NewAPIHandler(
 	h.mux.HandleFunc("/api/config", h.handleConfig)
 	h.mux.HandleFunc("/api/health", h.handleHealth)
 	h.mux.HandleFunc("/api/pnl-by-pair", h.handlePnLByPair)
+	h.mux.HandleFunc("/api/pnl-by-strategy", h.handlePnLByStrategy)
 	return h
 }
 
@@ -299,6 +300,69 @@ func (h *apiHandler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
+}
+
+// strategyStats holds aggregated P&L for one strategy bucket.
+type strategyStats struct {
+	Strategy    string  `json:"strategy"`
+	TotalPnL    float64 `json:"total_pnl"`
+	TradeCount  int     `json:"trade_count"`
+	WinRate     float64 `json:"win_rate"`
+	TotalVolume float64 `json:"total_volume"`
+}
+
+// handlePnLByStrategy groups all trades by Trade.Strategy and returns aggregate P&L
+// per strategy sorted by total_pnl descending. Trades with Strategy=="" are bucketed
+// as "unknown" for backward-compatibility with legacy records.
+func (h *apiHandler) handlePnLByStrategy(w http.ResponseWriter, r *http.Request) {
+	trades := h.store.AllTrades()
+	type agg struct {
+		net   decimal.Decimal
+		vol   decimal.Decimal
+		count int
+		wins  int
+	}
+	by := make(map[string]*agg)
+	for _, t := range trades {
+		key := t.Strategy
+		if key == "" {
+			key = "unknown"
+		}
+		a, ok := by[key]
+		if !ok {
+			a = &agg{}
+			by[key] = a
+		}
+		a.net = a.net.Add(t.NetProfit)
+		a.vol = a.vol.Add(t.Volume)
+		a.count++
+		if t.NetProfit.IsPositive() {
+			a.wins++
+		}
+	}
+
+	result := make([]strategyStats, 0, len(by))
+	for k, a := range by {
+		netF, _ := a.net.Float64()
+		volF, _ := a.vol.Float64()
+		wr := 0.0
+		if a.count > 0 {
+			wr = float64(a.wins) / float64(a.count)
+		}
+		result = append(result, strategyStats{
+			Strategy:    k,
+			TotalPnL:    netF,
+			TradeCount:  a.count,
+			WinRate:     wr,
+			TotalVolume: volF,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].TotalPnL > result[j].TotalPnL
+	})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"strategies": result,
+	})
 }
 
 // paginate slices the elements [0, total) according to ?limit= and ?offset= query params

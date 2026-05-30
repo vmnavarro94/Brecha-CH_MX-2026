@@ -435,6 +435,141 @@ func TestAPIConfig_PatchFees(t *testing.T) {
 	}
 }
 
+// --- GET /api/pnl-by-strategy ---
+
+func TestAPIPnLByStrategy_Empty(t *testing.T) {
+	st, rm := newTestComponents(t)
+	handler := newAPI(t, st, rm, func() map[string]model.SpreadStats { return nil })
+
+	resp, body := getJSON(t, handler, "/api/pnl-by-strategy")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	strategies, ok := body["strategies"].([]interface{})
+	if !ok {
+		t.Fatal("expected strategies array in response")
+	}
+	if len(strategies) != 0 {
+		t.Errorf("expected empty strategies array, got %d entries", len(strategies))
+	}
+}
+
+func TestAPIPnLByStrategy_SingleStrategy(t *testing.T) {
+	st, rm := newTestComponents(t)
+
+	for i := 0; i < 3; i++ {
+		st.SaveTrade(types.Trade{
+			ID:         fmt.Sprintf("t%d", i),
+			Strategy:   "spatial",
+			NetProfit:  decimal.NewFromFloat(float64(i+1) * 10),
+			Volume:     decimal.NewFromFloat(0.01),
+			ExecutedAt: time.Now(),
+		})
+	}
+
+	handler := newAPI(t, st, rm, func() map[string]model.SpreadStats { return nil })
+
+	resp, body := getJSON(t, handler, "/api/pnl-by-strategy")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	strategies, ok := body["strategies"].([]interface{})
+	if !ok {
+		t.Fatal("expected strategies array in response")
+	}
+	if len(strategies) != 1 {
+		t.Fatalf("expected 1 strategy row, got %d", len(strategies))
+	}
+
+	row := strategies[0].(map[string]interface{})
+	if row["strategy"] != "spatial" {
+		t.Errorf("strategy: got %v, want spatial", row["strategy"])
+	}
+	if row["trade_count"].(float64) != 3 {
+		t.Errorf("trade_count: got %v, want 3", row["trade_count"])
+	}
+	// total = 10+20+30 = 60
+	if row["total_pnl"].(float64) != 60.0 {
+		t.Errorf("total_pnl: got %v, want 60", row["total_pnl"])
+	}
+}
+
+func TestAPIPnLByStrategy_TwoStrategiesSortedDesc(t *testing.T) {
+	st, rm := newTestComponents(t)
+
+	// spatial: 2 trades summing to 10
+	st.SaveTrade(types.Trade{
+		ID: "s1", Strategy: "spatial", NetProfit: decimal.NewFromFloat(6.0), ExecutedAt: time.Now(),
+	})
+	st.SaveTrade(types.Trade{
+		ID: "s2", Strategy: "spatial", NetProfit: decimal.NewFromFloat(4.0), ExecutedAt: time.Now(),
+	})
+	// triangular: 1 trade summing to 20
+	st.SaveTrade(types.Trade{
+		ID: "t1", Strategy: "triangular", NetProfit: decimal.NewFromFloat(20.0), ExecutedAt: time.Now(),
+	})
+
+	handler := newAPI(t, st, rm, func() map[string]model.SpreadStats { return nil })
+
+	resp, body := getJSON(t, handler, "/api/pnl-by-strategy")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	strategies, ok := body["strategies"].([]interface{})
+	if !ok {
+		t.Fatal("expected strategies array in response")
+	}
+	if len(strategies) != 2 {
+		t.Fatalf("expected 2 strategy rows, got %d", len(strategies))
+	}
+
+	// triangular (20) must come first (higher total_pnl).
+	first := strategies[0].(map[string]interface{})
+	if first["strategy"] != "triangular" {
+		t.Errorf("first strategy: got %v, want triangular (sorted desc)", first["strategy"])
+	}
+	if first["total_pnl"].(float64) != 20.0 {
+		t.Errorf("triangular total_pnl: got %v, want 20", first["total_pnl"])
+	}
+	second := strategies[1].(map[string]interface{})
+	if second["strategy"] != "spatial" {
+		t.Errorf("second strategy: got %v, want spatial", second["strategy"])
+	}
+	if second["total_pnl"].(float64) != 10.0 {
+		t.Errorf("spatial total_pnl: got %v, want 10", second["total_pnl"])
+	}
+}
+
+func TestAPIPnLByStrategy_LegacyEmptyStrategyGroupedAsUnknown(t *testing.T) {
+	st, rm := newTestComponents(t)
+
+	// Trade with no strategy set (legacy/empty).
+	st.SaveTrade(types.Trade{
+		ID:         "old-1",
+		Strategy:   "",
+		NetProfit:  decimal.NewFromFloat(5.0),
+		ExecutedAt: time.Now(),
+	})
+
+	handler := newAPI(t, st, rm, func() map[string]model.SpreadStats { return nil })
+
+	resp, body := getJSON(t, handler, "/api/pnl-by-strategy")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	strategies, ok := body["strategies"].([]interface{})
+	if !ok {
+		t.Fatal("expected strategies array in response")
+	}
+	if len(strategies) != 1 {
+		t.Fatalf("expected 1 strategy row, got %d", len(strategies))
+	}
+	row := strategies[0].(map[string]interface{})
+	if row["strategy"] != "unknown" {
+		t.Errorf("empty strategy should be bucketed as unknown, got %v", row["strategy"])
+	}
+}
+
 func TestAPIConfig_PatchFees_SlippageOnly(t *testing.T) {
 	st, rm := newTestComponents(t)
 
