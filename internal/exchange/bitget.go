@@ -101,56 +101,59 @@ func (b *Bitget) run(ctx context.Context) error {
 			continue
 		}
 
-		// Bitget books1 format:
-		// {"action":"snapshot","arg":{...},"data":[{"asks":[["price","qty"]],"bids":[["price","qty"]],"ts":"..."}]}
-		var envelope struct {
-			Action string `json:"action"`
-			Arg    struct {
-				Channel string `json:"channel"`
-			} `json:"arg"`
-			Data []struct {
-				Asks [][]string `json:"asks"`
-				Bids [][]string `json:"bids"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal(msg, &envelope); err != nil {
+		pu, ok := b.parseMessage(msg)
+		if !ok {
 			continue
 		}
-		if envelope.Arg.Channel != "books1" {
-			continue
-		}
-		if len(envelope.Data) == 0 {
-			continue
-		}
-		d := envelope.Data[0]
-		if len(d.Bids) == 0 || len(d.Asks) == 0 {
-			continue
-		}
-		if len(d.Bids[0]) < 2 || len(d.Asks[0]) < 2 {
-			continue
-		}
-
-		bid, e1 := decimal.NewFromString(d.Bids[0][0])
-		bidSize, e2 := decimal.NewFromString(d.Bids[0][1])
-		ask, e3 := decimal.NewFromString(d.Asks[0][0])
-		askSize, e4 := decimal.NewFromString(d.Asks[0][1])
-		if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
-			continue
-		}
-		if bid.IsZero() || ask.IsZero() {
-			continue
-		}
-
 		select {
-		case b.ch <- types.PriceUpdate{
-			Exchange:   "bitget",
-			Bid:        bid,
-			Ask:        ask,
-			BidSize:    bidSize,
-			AskSize:    askSize,
-			ReceivedAt: time.Now(),
-		}:
+		case b.ch <- pu:
 		default:
 		}
 	}
+}
+
+// parseMessage decodes a Bitget books1 snapshot/update frame.
+func (b *Bitget) parseMessage(msg []byte) (types.PriceUpdate, bool) {
+	var envelope struct {
+		Action string `json:"action"`
+		Arg    struct {
+			Channel string `json:"channel"`
+		} `json:"arg"`
+		Data []struct {
+			Asks [][]string `json:"asks"`
+			Bids [][]string `json:"bids"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		return types.PriceUpdate{}, false
+	}
+	if envelope.Arg.Channel != "books1" {
+		return types.PriceUpdate{}, false
+	}
+	if len(envelope.Data) == 0 {
+		return types.PriceUpdate{}, false
+	}
+	d := envelope.Data[0]
+	if len(d.Bids) == 0 || len(d.Asks) == 0 ||
+		len(d.Bids[0]) < 2 || len(d.Asks[0]) < 2 {
+		return types.PriceUpdate{}, false
+	}
+	bid, e1 := decimal.NewFromString(d.Bids[0][0])
+	bidSize, e2 := decimal.NewFromString(d.Bids[0][1])
+	ask, e3 := decimal.NewFromString(d.Asks[0][0])
+	askSize, e4 := decimal.NewFromString(d.Asks[0][1])
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
+		return types.PriceUpdate{}, false
+	}
+	if bid.IsZero() || ask.IsZero() {
+		return types.PriceUpdate{}, false
+	}
+	return types.PriceUpdate{
+		Exchange:   "bitget",
+		Bid:        bid,
+		Ask:        ask,
+		BidSize:    bidSize,
+		AskSize:    askSize,
+		ReceivedAt: time.Now(),
+	}, true
 }

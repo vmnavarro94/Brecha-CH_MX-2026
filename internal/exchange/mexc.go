@@ -112,45 +112,51 @@ func (m *MEXC) run(ctx context.Context) error {
 			continue
 		}
 
-		// MEXC bookTicker v3 format:
-		// {"c":"spot@public.bookTicker.v3.api@BTCUSDT","d":{"b":"...","B":"...","a":"...","A":"..."}}
-		var envelope struct {
-			Channel string `json:"c"`
-			Data    struct {
-				Bid     string `json:"b"`
-				BidSize string `json:"B"`
-				Ask     string `json:"a"`
-				AskSize string `json:"A"`
-			} `json:"d"`
-		}
-		if err := json.Unmarshal(msg, &envelope); err != nil {
+		pu, ok := m.parseMessage(msg)
+		if !ok {
 			continue
 		}
-		if envelope.Channel != "spot@public.bookTicker.v3.api@BTCUSDT" {
-			continue
-		}
-
-		bid, e1 := decimal.NewFromString(envelope.Data.Bid)
-		ask, e2 := decimal.NewFromString(envelope.Data.Ask)
-		bidSize, e3 := decimal.NewFromString(envelope.Data.BidSize)
-		askSize, e4 := decimal.NewFromString(envelope.Data.AskSize)
-		if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
-			continue
-		}
-		if bid.IsZero() || ask.IsZero() {
-			continue
-		}
-
 		select {
-		case m.ch <- types.PriceUpdate{
-			Exchange:   "mexc",
-			Bid:        bid,
-			Ask:        ask,
-			BidSize:    bidSize,
-			AskSize:    askSize,
-			ReceivedAt: time.Now(),
-		}:
+		case m.ch <- pu:
 		default:
 		}
 	}
+}
+
+// parseMessage decodes a MEXC bookTicker v3 frame into a PriceUpdate.
+// Ping frames must be intercepted earlier; parseMessage returns false for them.
+func (m *MEXC) parseMessage(msg []byte) (types.PriceUpdate, bool) {
+	var envelope struct {
+		Channel string `json:"c"`
+		Data    struct {
+			Bid     string `json:"b"`
+			BidSize string `json:"B"`
+			Ask     string `json:"a"`
+			AskSize string `json:"A"`
+		} `json:"d"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		return types.PriceUpdate{}, false
+	}
+	if envelope.Channel != "spot@public.bookTicker.v3.api@BTCUSDT" {
+		return types.PriceUpdate{}, false
+	}
+	bid, e1 := decimal.NewFromString(envelope.Data.Bid)
+	ask, e2 := decimal.NewFromString(envelope.Data.Ask)
+	bidSize, e3 := decimal.NewFromString(envelope.Data.BidSize)
+	askSize, e4 := decimal.NewFromString(envelope.Data.AskSize)
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
+		return types.PriceUpdate{}, false
+	}
+	if bid.IsZero() || ask.IsZero() {
+		return types.PriceUpdate{}, false
+	}
+	return types.PriceUpdate{
+		Exchange:   "mexc",
+		Bid:        bid,
+		Ask:        ask,
+		BidSize:    bidSize,
+		AskSize:    askSize,
+		ReceivedAt: time.Now(),
+	}, true
 }

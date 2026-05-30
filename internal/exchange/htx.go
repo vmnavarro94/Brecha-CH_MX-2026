@@ -104,33 +104,40 @@ func (h *HTX) run(ctx context.Context) error {
 			continue
 		}
 
-		// BBO tick: {"ch":"market.btcusdt.bbo","tick":{"bid":...,"bidSize":...,"ask":...,"askSize":...}}
-		var envelope struct {
-			Ch   string `json:"ch"`
-			Tick struct {
-				Bid     float64 `json:"bid"`
-				BidSize float64 `json:"bidSize"`
-				Ask     float64 `json:"ask"`
-				AskSize float64 `json:"askSize"`
-			} `json:"tick"`
-		}
-		if err := json.Unmarshal(msg, &envelope); err != nil || envelope.Ch != "market.btcusdt.bbo" {
+		pu, ok := h.parseMessage(msg)
+		if !ok {
 			continue
 		}
-		if envelope.Tick.Bid == 0 || envelope.Tick.Ask == 0 {
-			continue
-		}
-
 		select {
-		case h.ch <- types.PriceUpdate{
-			Exchange:   "htx",
-			Bid:        decimal.NewFromFloat(envelope.Tick.Bid),
-			Ask:        decimal.NewFromFloat(envelope.Tick.Ask),
-			BidSize:    decimal.NewFromFloat(envelope.Tick.BidSize),
-			AskSize:    decimal.NewFromFloat(envelope.Tick.AskSize),
-			ReceivedAt: time.Now(),
-		}:
+		case h.ch <- pu:
 		default:
 		}
 	}
+}
+
+// parseMessage decodes a HTX market.btcusdt.bbo frame (after gzip + ping handling).
+func (h *HTX) parseMessage(msg []byte) (types.PriceUpdate, bool) {
+	var envelope struct {
+		Ch   string `json:"ch"`
+		Tick struct {
+			Bid     float64 `json:"bid"`
+			BidSize float64 `json:"bidSize"`
+			Ask     float64 `json:"ask"`
+			AskSize float64 `json:"askSize"`
+		} `json:"tick"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err != nil || envelope.Ch != "market.btcusdt.bbo" {
+		return types.PriceUpdate{}, false
+	}
+	if envelope.Tick.Bid == 0 || envelope.Tick.Ask == 0 {
+		return types.PriceUpdate{}, false
+	}
+	return types.PriceUpdate{
+		Exchange:   "htx",
+		Bid:        decimal.NewFromFloat(envelope.Tick.Bid),
+		Ask:        decimal.NewFromFloat(envelope.Tick.Ask),
+		BidSize:    decimal.NewFromFloat(envelope.Tick.BidSize),
+		AskSize:    decimal.NewFromFloat(envelope.Tick.AskSize),
+		ReceivedAt: time.Now(),
+	}, true
 }

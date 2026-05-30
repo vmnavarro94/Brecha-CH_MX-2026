@@ -132,3 +132,123 @@ func TestKrakenParseMessage_Heartbeat(t *testing.T) {
 		t.Error("parseMessage should ignore non-array (event) frames")
 	}
 }
+
+// TestGateParseMessage verifies Gate.io spot.book_ticker frame parse.
+func TestGateParseMessage(t *testing.T) {
+	g := NewGate("ws://test")
+	msg := []byte(`{"channel":"spot.book_ticker","event":"update","result":{"b":"73008.50","B":"0.5","a":"73009.10","A":"0.6"}}`)
+	pu, ok := g.parseMessage(msg)
+	if !ok {
+		t.Fatal("parseMessage should accept a well-formed gate frame")
+	}
+	if pu.Exchange != "gate" || pu.Bid.String() != "73008.5" || pu.Ask.String() != "73009.1" {
+		t.Errorf("unexpected PriceUpdate: %+v", pu)
+	}
+}
+
+func TestGateParseMessage_WrongChannel(t *testing.T) {
+	g := NewGate("ws://test")
+	if _, ok := g.parseMessage([]byte(`{"channel":"spot.trades","event":"update"}`)); ok {
+		t.Error("parseMessage should reject non book_ticker channel")
+	}
+}
+
+// TestMEXCParseMessage verifies MEXC bookTicker v3 frame parse.
+func TestMEXCParseMessage(t *testing.T) {
+	m := NewMEXC("ws://test")
+	msg := []byte(`{"c":"spot@public.bookTicker.v3.api@BTCUSDT","d":{"b":"73005.00","B":"0.1","a":"73005.50","A":"0.2"}}`)
+	pu, ok := m.parseMessage(msg)
+	if !ok {
+		t.Fatal("parseMessage should accept a well-formed mexc frame")
+	}
+	if pu.Exchange != "mexc" || pu.Bid.String() != "73005" || pu.Ask.String() != "73005.5" {
+		t.Errorf("unexpected PriceUpdate: %+v", pu)
+	}
+}
+
+func TestMEXCParseMessage_Ping(t *testing.T) {
+	m := NewMEXC("ws://test")
+	if _, ok := m.parseMessage([]byte(`{"msg":"PING"}`)); ok {
+		t.Error("parseMessage should not produce a PriceUpdate from a PING frame")
+	}
+}
+
+// TestBitgetParseMessage verifies Bitget books1 snapshot parse.
+func TestBitgetParseMessage(t *testing.T) {
+	b := NewBitget("ws://test")
+	msg := []byte(`{"action":"snapshot","arg":{"channel":"books1"},"data":[{"asks":[["73020.00","0.4"]],"bids":[["73019.50","0.3"]],"ts":"123"}]}`)
+	pu, ok := b.parseMessage(msg)
+	if !ok {
+		t.Fatal("parseMessage should accept a well-formed bitget frame")
+	}
+	if pu.Exchange != "bitget" || pu.Bid.String() != "73019.5" || pu.Ask.String() != "73020" {
+		t.Errorf("unexpected PriceUpdate: %+v", pu)
+	}
+}
+
+func TestBitgetParseMessage_NonBooks(t *testing.T) {
+	b := NewBitget("ws://test")
+	if _, ok := b.parseMessage([]byte(`{"arg":{"channel":"trades"},"data":[]}`)); ok {
+		t.Error("parseMessage should reject non-books1 channel")
+	}
+}
+
+// TestHTXParseMessage verifies HTX bbo frame parse (decompressed by caller).
+func TestHTXParseMessage(t *testing.T) {
+	h := NewHTX("ws://test")
+	msg := []byte(`{"ch":"market.btcusdt.bbo","tick":{"bid":73015.5,"bidSize":0.7,"ask":73016.2,"askSize":0.8}}`)
+	pu, ok := h.parseMessage(msg)
+	if !ok {
+		t.Fatal("parseMessage should accept a well-formed htx frame")
+	}
+	if pu.Exchange != "htx" || pu.Bid.String() != "73015.5" || pu.Ask.String() != "73016.2" {
+		t.Errorf("unexpected PriceUpdate: %+v", pu)
+	}
+}
+
+func TestHTXParseMessage_Ping(t *testing.T) {
+	h := NewHTX("ws://test")
+	if _, ok := h.parseMessage([]byte(`{"ping":1234567890}`)); ok {
+		t.Error("parseMessage should not emit on a ping frame")
+	}
+}
+
+// TestCryptoComParseMessage verifies Crypto.com ticker frame parse.
+func TestCryptoComParseMessage(t *testing.T) {
+	c := NewCryptoCom("ws://test")
+	msg := []byte(`{"id":1,"result":{"channel":"ticker","data":[{"b":"73010.00","bs":"0.5","k":"73010.80","ks":"0.7"}]}}`)
+	pu, ok := c.parseMessage(msg)
+	if !ok {
+		t.Fatal("parseMessage should accept a well-formed cryptocom frame")
+	}
+	if pu.Exchange != "cryptocom" || pu.Bid.String() != "73010" || pu.Ask.String() != "73010.8" {
+		t.Errorf("unexpected PriceUpdate: %+v", pu)
+	}
+}
+
+func TestCryptoComParseMessage_Heartbeat(t *testing.T) {
+	c := NewCryptoCom("ws://test")
+	if _, ok := c.parseMessage([]byte(`{"id":99,"method":"public/heartbeat"}`)); ok {
+		t.Error("parseMessage should not emit on a heartbeat frame")
+	}
+}
+
+// TestKuCoinParseMessage verifies KuCoin /market/ticker frame parse.
+func TestKuCoinParseMessage(t *testing.T) {
+	k := NewKuCoin("https://api.kucoin.com")
+	msg := []byte(`{"type":"message","topic":"/market/ticker:BTC-USDT","data":{"bestBid":"73004.10","bestBidSize":"0.2","bestAsk":"73004.90","bestAskSize":"0.3"}}`)
+	pu, ok := k.parseMessage(msg)
+	if !ok {
+		t.Fatal("parseMessage should accept a well-formed kucoin frame")
+	}
+	if pu.Exchange != "kucoin" || pu.Bid.String() != "73004.1" || pu.Ask.String() != "73004.9" {
+		t.Errorf("unexpected PriceUpdate: %+v", pu)
+	}
+}
+
+func TestKuCoinParseMessage_Welcome(t *testing.T) {
+	k := NewKuCoin("https://api.kucoin.com")
+	if _, ok := k.parseMessage([]byte(`{"type":"welcome","id":"abc"}`)); ok {
+		t.Error("parseMessage should reject non-message type frames")
+	}
+}

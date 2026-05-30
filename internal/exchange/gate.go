@@ -100,47 +100,51 @@ func (g *Gate) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-
-		// Gate.io v4 book_ticker update:
-		// {"channel":"spot.book_ticker","event":"update","result":{"b":"...","B":"...","a":"...","A":"..."}}
-		var envelope struct {
-			Channel string `json:"channel"`
-			Event   string `json:"event"`
-			Result  struct {
-				Bid     string `json:"b"`
-				BidSize string `json:"B"`
-				Ask     string `json:"a"`
-				AskSize string `json:"A"`
-			} `json:"result"`
-		}
-		if err := json.Unmarshal(msg, &envelope); err != nil {
+		pu, ok := g.parseMessage(msg)
+		if !ok {
 			continue
 		}
-		if envelope.Channel != "spot.book_ticker" || envelope.Event != "update" {
-			continue
-		}
-
-		bid, e1 := decimal.NewFromString(envelope.Result.Bid)
-		ask, e2 := decimal.NewFromString(envelope.Result.Ask)
-		bidSize, e3 := decimal.NewFromString(envelope.Result.BidSize)
-		askSize, e4 := decimal.NewFromString(envelope.Result.AskSize)
-		if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
-			continue
-		}
-		if bid.IsZero() || ask.IsZero() {
-			continue
-		}
-
 		select {
-		case g.ch <- types.PriceUpdate{
-			Exchange:   "gate",
-			Bid:        bid,
-			Ask:        ask,
-			BidSize:    bidSize,
-			AskSize:    askSize,
-			ReceivedAt: time.Now(),
-		}:
+		case g.ch <- pu:
 		default:
 		}
 	}
+}
+
+// parseMessage decodes a Gate.io v4 spot.book_ticker update frame.
+func (g *Gate) parseMessage(msg []byte) (types.PriceUpdate, bool) {
+	var envelope struct {
+		Channel string `json:"channel"`
+		Event   string `json:"event"`
+		Result  struct {
+			Bid     string `json:"b"`
+			BidSize string `json:"B"`
+			Ask     string `json:"a"`
+			AskSize string `json:"A"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		return types.PriceUpdate{}, false
+	}
+	if envelope.Channel != "spot.book_ticker" || envelope.Event != "update" {
+		return types.PriceUpdate{}, false
+	}
+	bid, e1 := decimal.NewFromString(envelope.Result.Bid)
+	ask, e2 := decimal.NewFromString(envelope.Result.Ask)
+	bidSize, e3 := decimal.NewFromString(envelope.Result.BidSize)
+	askSize, e4 := decimal.NewFromString(envelope.Result.AskSize)
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
+		return types.PriceUpdate{}, false
+	}
+	if bid.IsZero() || ask.IsZero() {
+		return types.PriceUpdate{}, false
+	}
+	return types.PriceUpdate{
+		Exchange:   "gate",
+		Bid:        bid,
+		Ask:        ask,
+		BidSize:    bidSize,
+		AskSize:    askSize,
+		ReceivedAt: time.Now(),
+	}, true
 }

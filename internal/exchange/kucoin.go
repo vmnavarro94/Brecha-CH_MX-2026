@@ -158,45 +158,51 @@ func (k *KuCoin) run(ctx context.Context) error {
 			return err
 		}
 
-		// KuCoin ticker: {"type":"message","topic":"/market/ticker:BTC-USDT","data":{"bestBid":"...","bestBidSize":"...","bestAsk":"...","bestAskSize":"..."}}
-		var envelope struct {
-			Type  string `json:"type"`
-			Topic string `json:"topic"`
-			Data  struct {
-				BestBid     string `json:"bestBid"`
-				BestBidSize string `json:"bestBidSize"`
-				BestAsk     string `json:"bestAsk"`
-				BestAskSize string `json:"bestAskSize"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal(msg, &envelope); err != nil {
+		pu, ok := k.parseMessage(msg)
+		if !ok {
 			continue
 		}
-		if envelope.Type != "message" || envelope.Topic != "/market/ticker:BTC-USDT" {
-			continue
-		}
-
-		bid, e1 := decimal.NewFromString(envelope.Data.BestBid)
-		ask, e2 := decimal.NewFromString(envelope.Data.BestAsk)
-		bidSize, e3 := decimal.NewFromString(envelope.Data.BestBidSize)
-		askSize, e4 := decimal.NewFromString(envelope.Data.BestAskSize)
-		if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
-			continue
-		}
-		if bid.IsZero() || ask.IsZero() {
-			continue
-		}
-
 		select {
-		case k.ch <- types.PriceUpdate{
-			Exchange:   "kucoin",
-			Bid:        bid,
-			Ask:        ask,
-			BidSize:    bidSize,
-			AskSize:    askSize,
-			ReceivedAt: time.Now(),
-		}:
+		case k.ch <- pu:
 		default:
 		}
 	}
+}
+
+// parseMessage decodes a KuCoin /market/ticker:BTC-USDT frame.
+func (k *KuCoin) parseMessage(msg []byte) (types.PriceUpdate, bool) {
+	var envelope struct {
+		Type  string `json:"type"`
+		Topic string `json:"topic"`
+		Data  struct {
+			BestBid     string `json:"bestBid"`
+			BestBidSize string `json:"bestBidSize"`
+			BestAsk     string `json:"bestAsk"`
+			BestAskSize string `json:"bestAskSize"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		return types.PriceUpdate{}, false
+	}
+	if envelope.Type != "message" || envelope.Topic != "/market/ticker:BTC-USDT" {
+		return types.PriceUpdate{}, false
+	}
+	bid, e1 := decimal.NewFromString(envelope.Data.BestBid)
+	ask, e2 := decimal.NewFromString(envelope.Data.BestAsk)
+	bidSize, e3 := decimal.NewFromString(envelope.Data.BestBidSize)
+	askSize, e4 := decimal.NewFromString(envelope.Data.BestAskSize)
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
+		return types.PriceUpdate{}, false
+	}
+	if bid.IsZero() || ask.IsZero() {
+		return types.PriceUpdate{}, false
+	}
+	return types.PriceUpdate{
+		Exchange:   "kucoin",
+		Bid:        bid,
+		Ask:        ask,
+		BidSize:    bidSize,
+		AskSize:    askSize,
+		ReceivedAt: time.Now(),
+	}, true
 }
