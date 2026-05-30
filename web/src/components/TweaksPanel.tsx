@@ -208,12 +208,9 @@ export default function TweaksPanel() {
                             }}
                             onBlur={(e) => {
                               const v = parseFloat(e.target.value)
-                              if (!isNaN(v)) patch({ fees: { [name]: { taker_fee: v, slippage: f.slippage } } })
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                const v = parseFloat((e.target as HTMLInputElement).value)
-                                if (!isNaN(v)) patch({ fees: { [name]: { taker_fee: v, slippage: f.slippage } } })
+                              if (!isNaN(v)) {
+                                const current = cfg.fees?.[name]
+                                if (current) patch({ fees: { [name]: { taker_fee: v, slippage: current.slippage } } })
                               }
                             }}
                           />
@@ -240,12 +237,9 @@ export default function TweaksPanel() {
                             }}
                             onBlur={(e) => {
                               const v = parseFloat(e.target.value)
-                              if (!isNaN(v)) patch({ fees: { [name]: { taker_fee: f.taker_fee, slippage: v } } })
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                const v = parseFloat((e.target as HTMLInputElement).value)
-                                if (!isNaN(v)) patch({ fees: { [name]: { taker_fee: f.taker_fee, slippage: v } } })
+                              if (!isNaN(v)) {
+                                const current = cfg.fees?.[name]
+                                if (current) patch({ fees: { [name]: { taker_fee: current.taker_fee, slippage: v } } })
                               }
                             }}
                           />
