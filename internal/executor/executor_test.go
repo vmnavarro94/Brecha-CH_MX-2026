@@ -2,6 +2,7 @@ package executor
 
 import (
 	"errors"
+	"math"
 	"math/rand"
 	"testing"
 	"time"
@@ -21,6 +22,19 @@ func seededDepthCfg(seed int64) depth.Config {
 		StepPct:   0.0001,
 		MinQtyBTC: 0.1,
 		MaxQtyBTC: 0.1,
+		Rand:      rand.New(rand.NewSource(seed)),
+	}
+}
+
+// multiLevelDepthCfg returns a config with N=3 levels of fixed qty per level (no random),
+// step_pct=0.0001 → 0.01% gap between levels. Required to assert that VWAP != BBO when
+// walking multiple levels, which is needed by the adversarial reversal test.
+func multiLevelDepthCfg(seed int64, qtyPerLevel float64) depth.Config {
+	return depth.Config{
+		N:         3,
+		StepPct:   0.0001,
+		MinQtyBTC: qtyPerLevel,
+		MaxQtyBTC: qtyPerLevel,
 		Rand:      rand.New(rand.NewSource(seed)),
 	}
 }
@@ -435,56 +449,61 @@ func TestExecute_PartialFillFlag(t *testing.T) {
 }
 
 // TestExecute_ReversalUsesVWAPCost asserts that when the sell leg fails, the wallet is
-// credited back the exact VWAP-accumulated buy cost, not bboAsk*volume.
-// spec D7
+// credited back the exact VWAP-accumulated buy cost, not bboAsk*volume. Uses a 3-level
+// depth config so vwapBuy != bboAsk — a bug that credits BBO would leave a balance gap.
+// spec D6
 func TestExecute_ReversalUsesVWAPCost(t *testing.T) {
 	now := time.Now()
 	clk := fixedClock{t: now}
 
-	ask := 50000.0
+	bboAsk := 50000.0
 
-	// Single level, qty=0.1, so vwap == ask exactly (no slippage in this config).
-	// sell side: kraken starts with 0 BTC so Debit will fail → reversal triggered.
+	// kraken has 0 BTC → sell-side Debit(BTC) will fail → reversal triggered.
 	w := wallet.NewMultiWallet(
-		[]string{"binance", "kraken"},
-		map[string]float64{"USDT": 1000.0, "BTC": 0.0}, // kraken has no BTC
-	)
-	// Give binance BTC = 0 so it only has the initial USDT.
-	// We override kraken BTC to 0; binance starts at 0 BTC but gets credited during buy.
-	w2 := wallet.NewMultiWallet(
 		[]string{"binance", "kraken"},
 		map[string]float64{"USDT": 1000.0, "BTC": 0.0},
 	)
-	_ = w
 
 	st := store.NewStore(t.TempDir())
 
 	snapshot := map[string]types.PriceUpdate{
-		"binance": makeUpdate("binance", 49900.0, ask, now),
+		"binance": makeUpdate("binance", 49900.0, bboAsk, now),
 		"kraken":  makeUpdate("kraken", 50300.0, 50400.0, now),
 	}
 	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
 
-	// MaxVolume=0.01; wallet USDT=1000 → volume = min(0.01, 1000/50000=0.02) = 0.01
-	opp := makeOpp("binance", "kraken", ask, 50300.0, 0.01)
+	// Multi-level depth: N=3, 0.005 BTC per level, step 0.01% → ask levels at:
+	//   L0 50000.00 × 0.005
+	//   L1 50005.00 × 0.005
+	//   L2 50010.00 × 0.005
+	// Target 0.012 BTC walks all 3 levels with 0.002 taken from L2.
+	// vwapBuy = (0.005*50000 + 0.005*50005 + 0.002*50010) / 0.012 = 50003.75
+	// cost_vwap = 0.012 * 50003.75 = 600.045
+	// cost_bbo  = 0.012 * 50000.00 = 600.000   (the buggy value)
+	const targetVol = 0.012
+	const expectedVWAP = 50003.75
+	const expectedCost = targetVol * expectedVWAP
+
+	opp := makeOpp("binance", "kraken", bboAsk, 50300.0, targetVol)
 	st.Save(*opp)
 
-	ex := NewExecutor(w2, st, snapshotFn, clk, stalenessThreshold, seededDepthCfg(1))
+	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold, multiLevelDepthCfg(1, 0.005))
 	err := ex.Execute(opp)
 	if !errors.Is(err, ErrInsufficientBalance) {
 		t.Fatalf("expected ErrInsufficientBalance (sell-side reversal), got %v", err)
 	}
 
-	// After reversal: binance USDT should be restored to initial 1000.
-	// cost = vwapBuy * buyFilled = 50000 * 0.01 = 500
-	// initial - cost + credit = 1000 - 500 + 500 = 1000
-	restoredUSDT := w2.Balance("binance", "USDT")
-	if restoredUSDT != 1000.0 {
-		t.Errorf("binance USDT after reversal: got %v, want 1000 (VWAP cost credited back)", restoredUSDT)
+	// After reversal: binance USDT must be back to 1000 EXACTLY.
+	// If reversal credited bboAsk*vol (600.000) instead of vwap*vol (600.045),
+	// USDT would be 999.955 — the test would catch it.
+	restoredUSDT := w.Balance("binance", "USDT")
+	const tolerance = 1e-9
+	if math.Abs(restoredUSDT-1000.0) > tolerance {
+		t.Errorf("binance USDT after reversal: got %.6f, want 1000.0 (VWAP=%.4f, expectedCost=%.6f)",
+			restoredUSDT, expectedVWAP, expectedCost)
 	}
-	// binance BTC should be 0 again (bought then reversed)
-	restoredBTC := w2.Balance("binance", "BTC")
-	if restoredBTC != 0.0 {
+	restoredBTC := w.Balance("binance", "BTC")
+	if math.Abs(restoredBTC) > tolerance {
 		t.Errorf("binance BTC after reversal: got %v, want 0", restoredBTC)
 	}
 }

@@ -113,3 +113,61 @@ func TestConcurrentInserts(t *testing.T) {
 		t.Errorf("ConcurrentInserts: expected %d opportunities, got %d", n, len(all))
 	}
 }
+
+// TestLoadTrades_LegacyPayloadBackwardCompat verifies that a Trade payload written
+// before partial_fill / requested_volume existed loads with zero-values for those
+// fields. This locks the spec D10 contract — old SQLite rows must not break parsing.
+func TestLoadTrades_LegacyPayloadBackwardCompat(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+
+	// Hand-craft a payload representing a pre-D10 trade: no partial_fill, no requested_volume.
+	legacyID := "legacy-001"
+	legacyPayload := `{
+		"ID": "` + legacyID + `",
+		"OpportunityID": "opp-1",
+		"BuyExchange": "binance",
+		"SellExchange": "kraken",
+		"BuyPrice": "50000.00",
+		"SellPrice": "50300.00",
+		"Volume": "0.01",
+		"GrossProfit": "3.00",
+		"Fees": "1.00",
+		"NetProfit": "2.00",
+		"Slippage": "0",
+		"ExecutedAt": "2026-01-01T00:00:00Z"
+	}`
+
+	// Insert directly into SQLite, bypassing the Go struct path so the new fields
+	// genuinely never appear in the payload.
+	_, err := s.db.Exec(
+		`INSERT INTO trades (id, executed_at, buy_exchange, sell_exchange, buy_price,
+			sell_price, volume, gross_profit, fees, net_profit, slippage, payload)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		legacyID, "2026-01-01T00:00:00Z", "binance", "kraken", "50000.00",
+		"50300.00", "0.01", "3.00", "1.00", "2.00", "0", legacyPayload,
+	)
+	if err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+	s.Close()
+
+	// Reopen — loadTrades() runs and must not panic on missing keys.
+	s2 := NewStore(dir)
+	defer s2.Close()
+
+	trades := s2.AllTrades()
+	if len(trades) != 1 {
+		t.Fatalf("AllTrades: got %d, want 1", len(trades))
+	}
+	tr := trades[0]
+	if tr.ID != legacyID {
+		t.Errorf("ID: got %q, want %q", tr.ID, legacyID)
+	}
+	if tr.PartialFill != false {
+		t.Errorf("PartialFill on legacy row: got %v, want false (zero value)", tr.PartialFill)
+	}
+	if !tr.RequestedVolume.IsZero() {
+		t.Errorf("RequestedVolume on legacy row: got %s, want 0 (zero value)", tr.RequestedVolume.String())
+	}
+}
