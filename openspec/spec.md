@@ -604,6 +604,369 @@ The frontend MUST provide a `useMarketSocket` hook that connects to the WebSocke
 
 ---
 
+## 11. Order Book Depth (`internal/depth/`, executor refactor)
+
+### Requirement D1: Synthetic ask book generated from BBO
+
+The system MUST generate N ask levels starting at the BBO ask price, each step `StepPct` worse than the previous, with randomized quantities in `[MinLevelQty, MaxLevelQty]`.
+
+#### Scenario: Five ask levels from BBO
+
+- GIVEN bbo_ask=50000, step_pct=0.0001, levels=5
+- WHEN `AskLevels` is called
+- THEN the returned slice has exactly 5 entries
+- AND prices are [50000, 50005, 50010, 50015, 50020]
+
+#### Scenario: Quantities within configured bounds
+
+- GIVEN min_level_qty=0.005, max_level_qty=0.025
+- WHEN `AskLevels` is called with any BBO
+- THEN every level quantity satisfies 0.005 <= qty <= 0.025
+
+**Test strategy**: unit — deterministic seed, verify price progression and qty bounds.
+
+---
+
+### Requirement D2: Deterministic generation with seeded source
+
+The system MUST produce identical level prices and quantities when given the same `rand.Source` seed, BBO, and config.
+
+#### Scenario: Same seed reproduces same book
+
+- GIVEN a fixed seed S, bbo_ask=50000, and depth config C
+- WHEN `AskLevels` is called twice with a freshly-seeded source each time
+- THEN both calls return byte-identical slices
+
+**Test strategy**: unit — same seed, assert exact value equivalence.
+
+---
+
+### Requirement D3: Walk-the-book accumulates volume and computes VWAP
+
+The system MUST iterate levels in order, accumulate filled quantity up to target, and return the volume-weighted average price of consumed liquidity.
+
+#### Scenario: Single level fully covers target
+
+- GIVEN levels=[(50000, 0.025), (50005, 0.05)], target=0.02
+- WHEN `Walk` is called
+- THEN filled=0.02, vwap=50000.00, partial=false
+
+#### Scenario: Two levels required, exact fill
+
+- GIVEN levels=[(50000, 0.025), (50005, 0.05)], target=0.05
+- WHEN `Walk` is called
+- THEN filled=0.05, vwap=50002.50, partial=false
+
+#### Scenario: Liquidity exhausted before target reached
+
+- GIVEN levels=[(50000, 0.025), (50005, 0.05)], target=0.10
+- WHEN `Walk` is called
+- THEN filled=0.075, vwap≈50003.33, partial=true
+
+**Test strategy**: unit — fixed price + qty, assert VWAP and partial flag.
+
+---
+
+### Requirement D4: Trade prices hold VWAP fill price
+
+The system MUST set `Trade.BuyPrice` to the buy-side VWAP and `Trade.SellPrice` to the sell-side VWAP after walking the respective books.
+
+#### Scenario: Buy price reflects VWAP
+
+- GIVEN a walk-the-book result with vwap_buy=50002.50
+- WHEN the executor records the trade
+- THEN Trade.BuyPrice=50002.50
+
+#### Scenario: Sell price reflects VWAP
+
+- GIVEN a walk-the-book result with vwap_sell=50297.50
+- WHEN the executor records the trade
+- THEN Trade.SellPrice=50297.50
+
+**Test strategy**: unit — seeded depth config, assert Trade fields against known VWAP.
+
+---
+
+### Requirement D5: Partial fill flag set on liquidity exhaustion
+
+The system MUST set `Trade.PartialFill=true` and `Trade.RequestedVolume` to the originally requested quantity whenever available liquidity is less than requested.
+
+#### Scenario: Partial fill recorded
+
+- GIVEN requested=0.10 BTC, available_liquidity=0.075 BTC
+- WHEN the executor walks the book
+- THEN Trade.PartialFill=true
+- AND Trade.RequestedVolume=0.10
+- AND Trade.Volume=0.075
+
+#### Scenario: Full fill leaves flag false
+
+- GIVEN requested=0.02 BTC, available_liquidity >= 0.02 BTC
+- WHEN the executor walks the book
+- THEN Trade.PartialFill=false
+- AND Trade.Volume=0.02
+
+**Test strategy**: unit — liquidity-constrained depth config, assert flag + requested vs filled volumes.
+
+---
+
+### Requirement D6: Slippage reflects walk cost vs BBO
+
+The system MUST compute slippage as the combined cost of walking past BBO on both legs: `Slippage = (vwapBuy - bboAsk) + (bboBid - vwapSell)`.
+
+#### Scenario: Two-leg slippage calculation
+
+- GIVEN vwap_buy=50002.50, bbo_ask=50000, bbo_bid=50300, vwap_sell=50297.50
+- WHEN slippage is computed
+- THEN Slippage=5.00
+
+**Test strategy**: unit — known VWAP, known BBO, verify formula.
+
+---
+
+### Requirement D7: Wallet reversal on sell failure uses VWAP cost
+
+The system MUST credit the wallet with the exact VWAP-accumulated buy cost when a sell leg fails, not the BBO-estimated cost.
+
+#### Scenario: Reversal uses VWAP cost
+
+- GIVEN buy succeeded: vwap_buy=50002.50, filled=0.05 BTC (cost=2500.125 USDT)
+- WHEN the sell leg fails
+- THEN wallet is credited 2500.125 USDT
+- AND the BBO-estimated cost of 2500.00 USDT is NOT used
+
+**Test strategy**: unit — asymmetric fill test where vwap > bbo, assert reversal credit matches VWAP cost, not BBO.
+
+---
+
+### Requirement D8: Demo defaults produce partial fills within 60 seconds
+
+The system SHOULD produce at least one partial fill within 60 seconds of bot start when running with default depth config (5 levels, qty range [0.005, 0.025] BTC).
+
+#### Scenario: Partial fill occurs in demo mode
+
+- GIVEN default depth config and BTC price ~74000 USDT, MaxPositionUSDT=1000
+- WHEN the bot runs for 60 seconds
+- THEN at least one Trade with PartialFill=true is recorded
+
+**Test strategy**: integration — observe live runtime behavior or skip in unit testing.
+
+---
+
+### Requirement D9: No regression on existing tests
+
+The system MUST pass all pre-existing tests without modification.
+
+#### Scenario: Existing test suite passes
+
+- GIVEN the codebase before this change has 65 passing tests
+- WHEN the order-book-depth change is applied
+- THEN all 65 tests still pass
+
+**Test strategy**: `go test ./...` after all changes.
+
+---
+
+### Requirement D10: Backward-compatible trade deserialization
+
+The system MUST deserialize Trade records persisted before this change (without `partial_fill` or `requested_volume` JSON fields) using zero-values for missing fields.
+
+#### Scenario: Old trade record loads cleanly
+
+- GIVEN a SQLite row whose payload JSON has no `partial_fill` or `requested_volume` keys
+- WHEN the row is decoded into `types.Trade`
+- THEN Trade.PartialFill=false and Trade.RequestedVolume=0 with no error
+
+**Test strategy**: unit — old-format JSON payloads, assert zero-valued fields on unmarshal.
+
+---
+
+## 12. Multi-Strategy Framework (`internal/strategy/`, engine refactor)
+
+### Requirement M1: Strategy interface contract
+
+The system MUST define a `strategy.Strategy` interface with exactly two methods: `Name() string` and `Detect(update, snapshot, now) []types.Opportunity`. Any type implementing this interface MUST be registerable with the engine without modifying engine internals.
+
+#### Scenario: Empty Detect result produces no heap entries
+
+- GIVEN a registered strategy whose Detect always returns `[]types.Opportunity{}`
+- WHEN Engine.ProcessUpdate is called
+- THEN no opportunity is added to the heap
+
+#### Scenario: Two opportunities returned from Detect reach the heap
+
+- GIVEN a registered strategy whose Detect returns 2 opportunities
+- WHEN Engine.ProcessUpdate is called
+- THEN both opportunities are present in the heap
+
+#### Scenario: Fan-out across two registered strategies
+
+- GIVEN two strategies registered on the same engine, each returning 1 opportunity
+- WHEN Engine.ProcessUpdate is called once
+- THEN 2 opportunities are in the heap (one per strategy)
+
+**Test strategy**: unit — inject mock strategies, assert heap contents.
+
+---
+
+### Requirement M2: SpatialStrategy preserves byte-equivalent behavior
+
+SpatialStrategy.Detect MUST produce results that are numerically identical to the pre-refactor engine behavior when given the same WS frames and config. No decimal arithmetic, ordering, or threshold comparisons MAY change during the extraction.
+
+#### Scenario: Same input produces same trade
+
+- GIVEN the same PriceUpdate sequence and FeeConfig that produced trade T pre-refactor
+- WHEN the same sequence is processed through the refactored stack (SpatialStrategy + thin engine)
+- THEN the resulting trade has identical NetProfit, Score, BuyExchange, and SellExchange as T
+
+#### Scenario: Spread model updated regardless of profit
+
+- GIVEN a PriceUpdate where both directions are below MinNetProfitPct
+- WHEN Detect is called
+- THEN the SpreadModel for that counterparty pair is still updated with the new sample
+
+#### Scenario: Statistical scoring when model is ready
+
+- GIVEN a spread model with IsReady=true, z_score=Z, net_pct=N, max_net_pct=M
+- WHEN Score is computed inside Detect
+- THEN Score = (N/M)*0.6 + sigmoid(Z)*0.4
+
+**Test strategy**: unit — deterministic PriceUpdate sequences, assert opportunity field byte-equivalence.
+
+---
+
+### Requirement M3: SpatialStrategy stamps opportunities with strategy name
+
+Every opportunity returned by SpatialStrategy.Detect MUST have `Strategy == "spatial"`. The engine MUST NOT overwrite this value.
+
+#### Scenario: Detect stamps Strategy field
+
+- GIVEN SpatialStrategy.Detect produces one opportunity
+- WHEN the opportunity is inspected
+- THEN opp.Strategy == "spatial"
+
+**Test strategy**: unit — call Detect, assert Strategy field on returned opps.
+
+---
+
+### Requirement M5: SpatialStrategy typed setters are race-safe
+
+SpatialStrategy MUST expose `SetMinNetProfitPct(float64)`, `SetFees(map[string]FeeConfig)`, and `SetMaxPositionUSDT(float64)`. Each setter MUST acquire a write lock before mutating internal state. Detect MUST acquire a read lock while reading the same fields.
+
+#### Scenario: SetMinNetProfitPct takes effect on next Detect
+
+- GIVEN SpatialStrategy configured with MinNetProfitPct=0.002
+- WHEN SetMinNetProfitPct(0.001) is called and Detect is invoked with a spread that yields net_pct=0.0015
+- THEN the opportunity is returned (threshold is now 0.001, not 0.002)
+
+#### Scenario: SetFees takes effect on next Detect
+
+- GIVEN fees configured with taker_fee=0.001
+- WHEN SetFees is called with taker_fee=0.002 and Detect runs
+- THEN cost calculations use taker_fee=0.002
+
+#### Scenario: Concurrent setter and Detect do not race
+
+- GIVEN SetFees is called from goroutine A while Detect is running in goroutine B
+- WHEN both complete
+- THEN the Go race detector reports no data race
+
+**Test strategy**: unit with `-race` flag — concurrent goroutines on setters and Detect simultaneously.
+
+---
+
+### Requirement M6: Strategy field propagated through Opportunity and Trade
+
+`types.Opportunity` and `types.Trade` MUST each contain `Strategy string \`json:"strategy,omitempty"\``. The executor MUST copy `opp.Strategy` into `trade.Strategy` before persisting.
+
+#### Scenario: Executor propagates strategy name
+
+- GIVEN an opportunity with Strategy="spatial" enters the executor
+- WHEN execution completes successfully
+- THEN trade.Strategy == "spatial"
+
+#### Scenario: Trade JSON includes strategy field
+
+- GIVEN a trade with Strategy="spatial"
+- WHEN serialized to JSON
+- THEN the payload contains `"strategy":"spatial"`
+
+#### Scenario: Old trade with no strategy field deserializes cleanly
+
+- GIVEN a SQLite row whose JSON payload has no "strategy" key
+- WHEN decoded into types.Trade
+- THEN Trade.Strategy == "" with no error
+
+**Test strategy**: unit — backward-compat JSON decode with missing field, assert zero-value.
+
+---
+
+### Requirement M7: /api/pnl-by-strategy aggregates by strategy name
+
+The endpoint MUST group all trades by `Trade.Strategy`, sum `NetProfit`, count trades, and return rows sorted by `total_pnl` descending. A trade with `Strategy==""` MUST be grouped under key `"unknown"`.
+
+#### Scenario: Three trades same strategy
+
+- GIVEN 3 trades each with Strategy="spatial" and NetProfit values P1, P2, P3
+- WHEN GET /api/pnl-by-strategy is called
+- THEN response contains 1 row: `{strategy:"spatial", trade_count:3, total_pnl:P1+P2+P3}`
+
+#### Scenario: Two strategies sorted by total_pnl desc
+
+- GIVEN 2 trades with Strategy="spatial" (sum=10) and 1 trade with Strategy="triangular" (sum=20)
+- WHEN GET /api/pnl-by-strategy is called
+- THEN response has 2 rows, "triangular" first (total_pnl=20), "spatial" second (total_pnl=10)
+
+#### Scenario: Legacy trade with empty strategy grouped as unknown
+
+- GIVEN 1 trade with Strategy=""
+- WHEN GET /api/pnl-by-strategy is called
+- THEN response contains 1 row with strategy="unknown"
+
+**Test strategy**: integration — construct store with trades, hit endpoint, assert grouping and sort order.
+
+---
+
+### Requirement M8: StrategyPnL panel renders per-strategy rows
+
+The frontend MUST include a `StrategyPnL` panel that reads from the `/api/pnl-by-strategy` endpoint (or the equivalent Zustand store slice), and renders one row per strategy showing total P&L, trade count, and win rate. The panel MUST be a sibling of the per-pair P&L panel, not a column inside it.
+
+#### Scenario: Panel renders row for existing strategy
+
+- GIVEN the store contains trades with strategy="spatial"
+- WHEN StrategyPnL renders
+- THEN a row for "spatial" is visible with total P&L and trade count populated
+
+#### Scenario: Empty state message when no trades
+
+- GIVEN the store has zero trades
+- WHEN StrategyPnL renders
+- THEN an empty-state message is displayed and no rows are rendered
+
+**Test strategy**: unit with React Testing Library — mock store, assert render output.
+
+---
+
+### Requirement M10: No regression on existing tests
+
+The refactored codebase MUST pass all 109 tests that existed before this change. The 12 engine tests covering spatial detection, scoring, and fees MUST be migrated to `internal/strategy/spatial/spatial_test.go` and continue to pass there.
+
+#### Scenario: Full test suite green
+
+- GIVEN the multi-strategy-framework change is fully applied
+- WHEN `go test ./...` is run
+- THEN all tests pass with no failures or data races
+
+#### Scenario: engine.go logic budget
+
+- GIVEN the refactored engine.go
+- WHEN the file is inspected (excluding type definitions and trivial setters)
+- THEN the logic line count does not exceed 60
+
+**Test strategy**: integration with `go test ./... -race` after all changes; verify test count >= 127 (109 baseline + 18 new).
+
+---
+
 ## Cross-Cutting: Strict TDD Notes
 
 All unit tests MUST use `go test ./...`. Tests MUST be in `_test.go` files alongside the package under test. Integration tests for the HTTP layer MUST use `net/http/httptest`. Race detection MUST be enabled (`-race`) for all concurrent components.
