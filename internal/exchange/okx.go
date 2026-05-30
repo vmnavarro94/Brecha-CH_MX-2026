@@ -95,54 +95,58 @@ func (o *OKX) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-
 		if string(msg) == "pong" {
 			continue
 		}
-
-		// Event messages (subscribe acks, errors) have an "event" field; skip them.
-		var peek struct {
-			Event string            `json:"event"`
-			Data  []json.RawMessage `json:"data"`
-		}
-		if err := json.Unmarshal(msg, &peek); err != nil || peek.Event != "" {
+		pu, ok := o.parseMessage(msg)
+		if !ok {
 			continue
 		}
-		if len(peek.Data) == 0 {
-			continue
-		}
-
-		var tick struct {
-			BidPx string `json:"bidPx"`
-			AskPx string `json:"askPx"`
-			BidSz string `json:"bidSz"`
-			AskSz string `json:"askSz"`
-		}
-		if err := json.Unmarshal(peek.Data[0], &tick); err != nil {
-			continue
-		}
-
-		bid, e1 := decimal.NewFromString(tick.BidPx)
-		ask, e2 := decimal.NewFromString(tick.AskPx)
-		bidSize, e3 := decimal.NewFromString(tick.BidSz)
-		askSize, e4 := decimal.NewFromString(tick.AskSz)
-		if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
-			continue
-		}
-		if bid.IsZero() || ask.IsZero() {
-			continue
-		}
-
 		select {
-		case o.ch <- types.PriceUpdate{
-			Exchange:   "okx",
-			Bid:        bid,
-			Ask:        ask,
-			BidSize:    bidSize,
-			AskSize:    askSize,
-			ReceivedAt: time.Now(),
-		}:
+		case o.ch <- pu:
 		default:
 		}
 	}
+}
+
+// parseMessage decodes an OKX tickers frame into a PriceUpdate.
+// Subscribe-ack frames (with "event" field set) and data-less frames are rejected.
+func (o *OKX) parseMessage(msg []byte) (types.PriceUpdate, bool) {
+	var peek struct {
+		Event string            `json:"event"`
+		Data  []json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(msg, &peek); err != nil || peek.Event != "" {
+		return types.PriceUpdate{}, false
+	}
+	if len(peek.Data) == 0 {
+		return types.PriceUpdate{}, false
+	}
+	var tick struct {
+		BidPx string `json:"bidPx"`
+		AskPx string `json:"askPx"`
+		BidSz string `json:"bidSz"`
+		AskSz string `json:"askSz"`
+	}
+	if err := json.Unmarshal(peek.Data[0], &tick); err != nil {
+		return types.PriceUpdate{}, false
+	}
+	bid, e1 := decimal.NewFromString(tick.BidPx)
+	ask, e2 := decimal.NewFromString(tick.AskPx)
+	bidSize, e3 := decimal.NewFromString(tick.BidSz)
+	askSize, e4 := decimal.NewFromString(tick.AskSz)
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
+		return types.PriceUpdate{}, false
+	}
+	if bid.IsZero() || ask.IsZero() {
+		return types.PriceUpdate{}, false
+	}
+	return types.PriceUpdate{
+		Exchange:   "okx",
+		Bid:        bid,
+		Ask:        ask,
+		BidSize:    bidSize,
+		AskSize:    askSize,
+		ReceivedAt: time.Now(),
+	}, true
 }

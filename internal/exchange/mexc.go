@@ -83,6 +83,7 @@ func (m *MEXC) run(ctx context.Context) error {
 
 	m.logger.Info("connected")
 
+	rawCount := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -93,6 +94,15 @@ func (m *MEXC) run(ctx context.Context) error {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			return err
+		}
+
+		rawCount++
+		if rawCount <= 5 {
+			preview := string(msg)
+			if len(preview) > 200 {
+				preview = preview[:200]
+			}
+			m.logger.Info("raw msg", "n", rawCount, "data", preview)
 		}
 
 		// MEXC server sends {"msg":"PING"} every ~20s; must respond with {"msg":"PONG"}.

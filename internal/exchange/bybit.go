@@ -95,48 +95,53 @@ func (b *Bybit) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-
-		var envelope struct {
-			Topic string `json:"topic"`
-			Data  struct {
-				Bids [][]string `json:"b"`
-				Asks [][]string `json:"a"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal(msg, &envelope); err != nil {
+		pu, ok := b.parseMessage(msg)
+		if !ok {
 			continue
 		}
-		if envelope.Topic != "orderbook.1.BTCUSDT" {
-			continue
-		}
-		if len(envelope.Data.Bids) == 0 || len(envelope.Data.Asks) == 0 {
-			continue
-		}
-
-		bidEntry := envelope.Data.Bids[0]
-		askEntry := envelope.Data.Asks[0]
-		if len(bidEntry) < 2 || len(askEntry) < 2 {
-			continue
-		}
-
-		bid, e1 := decimal.NewFromString(bidEntry[0])
-		bidSize, e2 := decimal.NewFromString(bidEntry[1])
-		ask, e3 := decimal.NewFromString(askEntry[0])
-		askSize, e4 := decimal.NewFromString(askEntry[1])
-		if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
-			continue
-		}
-
 		select {
-		case b.ch <- types.PriceUpdate{
-			Exchange:   "bybit",
-			Bid:        bid,
-			Ask:        ask,
-			BidSize:    bidSize,
-			AskSize:    askSize,
-			ReceivedAt: time.Now(),
-		}:
+		case b.ch <- pu:
 		default:
 		}
 	}
+}
+
+// parseMessage decodes a Bybit orderbook.1.BTCUSDT frame into a PriceUpdate.
+func (b *Bybit) parseMessage(msg []byte) (types.PriceUpdate, bool) {
+	var envelope struct {
+		Topic string `json:"topic"`
+		Data  struct {
+			Bids [][]string `json:"b"`
+			Asks [][]string `json:"a"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		return types.PriceUpdate{}, false
+	}
+	if envelope.Topic != "orderbook.1.BTCUSDT" {
+		return types.PriceUpdate{}, false
+	}
+	if len(envelope.Data.Bids) == 0 || len(envelope.Data.Asks) == 0 {
+		return types.PriceUpdate{}, false
+	}
+	bidEntry := envelope.Data.Bids[0]
+	askEntry := envelope.Data.Asks[0]
+	if len(bidEntry) < 2 || len(askEntry) < 2 {
+		return types.PriceUpdate{}, false
+	}
+	bid, e1 := decimal.NewFromString(bidEntry[0])
+	bidSize, e2 := decimal.NewFromString(bidEntry[1])
+	ask, e3 := decimal.NewFromString(askEntry[0])
+	askSize, e4 := decimal.NewFromString(askEntry[1])
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
+		return types.PriceUpdate{}, false
+	}
+	return types.PriceUpdate{
+		Exchange:   "bybit",
+		Bid:        bid,
+		Ask:        ask,
+		BidSize:    bidSize,
+		AskSize:    askSize,
+		ReceivedAt: time.Now(),
+	}, true
 }

@@ -72,6 +72,7 @@ func (c *CryptoCom) run(ctx context.Context) error {
 
 	c.logger.Info("connected")
 
+	rawCount := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -84,6 +85,15 @@ func (c *CryptoCom) run(ctx context.Context) error {
 			return err
 		}
 
+		rawCount++
+		if rawCount <= 8 {
+			preview := string(msg)
+			if len(preview) > 300 {
+				preview = preview[:300]
+			}
+			c.logger.Info("raw msg", "n", rawCount, "data", preview)
+		}
+
 		var raw struct {
 			ID     int64  `json:"id"`
 			Method string `json:"method"`
@@ -93,8 +103,8 @@ func (c *CryptoCom) run(ctx context.Context) error {
 				Data    []struct {
 					Bid     string `json:"b"`
 					BidSize string `json:"bs"`
-					Ask     string `json:"a"`
-					AskSize string `json:"as"`
+					Ask     string `json:"k"`
+					AskSize string `json:"ks"`
 				} `json:"data"`
 			} `json:"result"`
 		}
@@ -112,7 +122,7 @@ func (c *CryptoCom) run(ctx context.Context) error {
 		}
 
 		// Accept data regardless of method field; just require correct channel and data.
-		if raw.Result.Channel != "ticker.BTC_USDT" {
+		if raw.Result.Channel != "ticker" {
 			continue
 		}
 		if len(raw.Result.Data) == 0 {

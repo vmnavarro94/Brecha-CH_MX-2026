@@ -87,60 +87,64 @@ func (k *Kraken) run(ctx context.Context) error {
 
 		// Kraken sends both event objects and array-format ticker updates.
 		// Arrays start with '[', objects with '{'.
-		if len(msg) == 0 || msg[0] != '[' {
+		pu, ok := k.parseMessage(msg)
+		if !ok {
 			continue
 		}
-
-		// Format: [channelID, {ticker}, "ticker", "XBT/USDT"]
-		var raw []json.RawMessage
-		if err := json.Unmarshal(msg, &raw); err != nil || len(raw) < 4 {
-			continue
-		}
-
-		var ticker struct {
-			Bid []json.RawMessage `json:"b"`
-			Ask []json.RawMessage `json:"a"`
-		}
-		if err := json.Unmarshal(raw[1], &ticker); err != nil {
-			continue
-		}
-		if len(ticker.Bid) < 3 || len(ticker.Ask) < 3 {
-			continue
-		}
-
-		var bidStr, askStr, bidLots, askLots string
-		if err := json.Unmarshal(ticker.Bid[0], &bidStr); err != nil {
-			continue
-		}
-		if err := json.Unmarshal(ticker.Ask[0], &askStr); err != nil {
-			continue
-		}
-		// index 2 = lot volume (decimal string)
-		if err := json.Unmarshal(ticker.Bid[2], &bidLots); err != nil {
-			continue
-		}
-		if err := json.Unmarshal(ticker.Ask[2], &askLots); err != nil {
-			continue
-		}
-
-		bid, e1 := decimal.NewFromString(bidStr)
-		ask, e2 := decimal.NewFromString(askStr)
-		bidSize, e3 := decimal.NewFromString(bidLots)
-		askSize, e4 := decimal.NewFromString(askLots)
-		if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
-			continue
-		}
-
 		select {
-		case k.ch <- types.PriceUpdate{
-			Exchange:   "kraken",
-			Bid:        bid,
-			Ask:        ask,
-			BidSize:    bidSize,
-			AskSize:    askSize,
-			ReceivedAt: time.Now(),
-		}:
+		case k.ch <- pu:
 		default:
 		}
 	}
+}
+
+// parseMessage decodes a Kraken v1 ticker array frame into a PriceUpdate.
+// Frame format: [channelID, {ticker}, "ticker", "XBT/USDT"]
+// ticker.b / ticker.a are [price, wholeLotVolume, lotVolume] arrays.
+func (k *Kraken) parseMessage(msg []byte) (types.PriceUpdate, bool) {
+	if len(msg) == 0 || msg[0] != '[' {
+		return types.PriceUpdate{}, false
+	}
+	var raw []json.RawMessage
+	if err := json.Unmarshal(msg, &raw); err != nil || len(raw) < 4 {
+		return types.PriceUpdate{}, false
+	}
+	var ticker struct {
+		Bid []json.RawMessage `json:"b"`
+		Ask []json.RawMessage `json:"a"`
+	}
+	if err := json.Unmarshal(raw[1], &ticker); err != nil {
+		return types.PriceUpdate{}, false
+	}
+	if len(ticker.Bid) < 3 || len(ticker.Ask) < 3 {
+		return types.PriceUpdate{}, false
+	}
+	var bidStr, askStr, bidLots, askLots string
+	if err := json.Unmarshal(ticker.Bid[0], &bidStr); err != nil {
+		return types.PriceUpdate{}, false
+	}
+	if err := json.Unmarshal(ticker.Ask[0], &askStr); err != nil {
+		return types.PriceUpdate{}, false
+	}
+	if err := json.Unmarshal(ticker.Bid[2], &bidLots); err != nil {
+		return types.PriceUpdate{}, false
+	}
+	if err := json.Unmarshal(ticker.Ask[2], &askLots); err != nil {
+		return types.PriceUpdate{}, false
+	}
+	bid, e1 := decimal.NewFromString(bidStr)
+	ask, e2 := decimal.NewFromString(askStr)
+	bidSize, e3 := decimal.NewFromString(bidLots)
+	askSize, e4 := decimal.NewFromString(askLots)
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
+		return types.PriceUpdate{}, false
+	}
+	return types.PriceUpdate{
+		Exchange:   "kraken",
+		Bid:        bid,
+		Ask:        ask,
+		BidSize:    bidSize,
+		AskSize:    askSize,
+		ReceivedAt: time.Now(),
+	}, true
 }
