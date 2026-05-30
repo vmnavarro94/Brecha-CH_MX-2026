@@ -24,6 +24,8 @@ import (
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/risk"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/server"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/store"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/strategy"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/strategy/spatial"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/uptime"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/wallet"
@@ -87,44 +89,43 @@ func main() {
 		}
 	}
 
-	// spreadStats builds a SpreadStats snapshot from the current model state.
-	spreadStatsFn := func() map[string]model.SpreadStats {
-		out := make(map[string]model.SpreadStats, len(spreadModels))
-		for k, m := range spreadModels {
-			out[k] = model.SpreadStats{
-				Pair:    k,
-				Mean:    m.Mean(),
-				Std:     m.Std(),
-				Samples: m.N(),
-			}
-		}
-		return out
-	}
-
-	// --- Engine ---
+	// --- SpatialStrategy ---
 
 	exchangeFees := exchange.Fees
 	if cfg.DemoMode {
 		exchangeFees = exchange.DemoFees
 	}
 
-	engineFees := make(map[string]engine.FeeConfig, len(exchangeFees))
+	spatFees := make(map[string]spatial.FeeConfig, len(exchangeFees))
 	for name, f := range exchangeFees {
-		engineFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.SlippageFactor, WithdrawalBTC: f.WithdrawalBTC, NetworkLatencyBps: f.NetworkLatencyBps}
+		spatFees[name] = spatial.FeeConfig{
+			TakerFee:          f.TakerFee,
+			SlippageFactor:    f.SlippageFactor,
+			WithdrawalBTC:     f.WithdrawalBTC,
+			NetworkLatencyBps: f.NetworkLatencyBps,
+		}
 	}
+
+	spat := spatial.New(spatial.Config{
+		Fees:               spatFees,
+		MinNetProfitPct:    cfg.MinNetProfitPct,
+		MaxPositionUSDT:    cfg.MaxPositionUSDT,
+		StalenessThreshold: cfg.StalenessThreshold,
+	}, spreadModels)
+
+	// --- Engine (thin coordinator) ---
 
 	eng := engine.NewEngine(
 		agg.Snapshot,
-		spreadModels,
 		clk,
 		engine.Config{
-			Fees:               engineFees,
-			MinNetProfitPct:    cfg.MinNetProfitPct,
-			MaxPositionUSDT:    cfg.MaxPositionUSDT,
-			OpportunityTTL:     cfg.OpportunityTTL,
-			StalenessThreshold: cfg.StalenessThreshold,
+			OpportunityTTL: cfg.OpportunityTTL,
 		},
+		[]engine.StrategyIface{spat},
 	)
+
+	// Ensure SpatialStrategy satisfies strategy.Strategy at compile time.
+	var _ strategy.Strategy = spat
 
 	// --- Risk Manager ---
 
@@ -153,6 +154,13 @@ func main() {
 	go hub.Run()
 
 	// --- Live config controller ---
+	// Setter routing after refactor:
+	//   MinNetProfitPct      → spat.SetMinNetProfitPct  (was eng)
+	//   MaxPositionUSDT      → spat.SetMaxPositionUSDT  (was eng)
+	//   StalenessThresholdMs → spat.SetStaleness        (was eng.SetStalenessThreshold)
+	//   Fees / DemoMode swap → spat.SetFees             (was eng.SetFees)
+	//   ExecutionInterval    → intervalCh               (unchanged)
+	//   CircuitBreaker*      → rm                       (unchanged)
 
 	intervalCh := make(chan time.Duration, 1)
 
@@ -180,17 +188,17 @@ func main() {
 
 		if patch.MinNetProfitPct != nil {
 			liveCfg.MinNetProfitPct = *patch.MinNetProfitPct
-			eng.SetMinNetProfitPct(*patch.MinNetProfitPct)
+			spat.SetMinNetProfitPct(*patch.MinNetProfitPct)
 			rm.SetMinNetProfitPct(*patch.MinNetProfitPct)
 		}
 		if patch.MaxPositionUSDT != nil {
 			liveCfg.MaxPositionUSDT = *patch.MaxPositionUSDT
-			eng.SetMaxPositionUSDT(*patch.MaxPositionUSDT)
+			spat.SetMaxPositionUSDT(*patch.MaxPositionUSDT)
 		}
 		if patch.StalenessThresholdMs != nil {
 			d := time.Duration(*patch.StalenessThresholdMs) * time.Millisecond
 			liveCfg.StalenessThresholdMs = *patch.StalenessThresholdMs
-			eng.SetStalenessThreshold(d)
+			spat.SetStaleness(d)
 		}
 		if patch.ExecutionIntervalMs != nil {
 			liveCfg.ExecutionIntervalMs = *patch.ExecutionIntervalMs
@@ -215,11 +223,16 @@ func main() {
 			} else {
 				srcFees = exchange.Fees
 			}
-			newFees := make(map[string]engine.FeeConfig, len(srcFees))
+			newFees := make(map[string]spatial.FeeConfig, len(srcFees))
 			for name, f := range srcFees {
-				newFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.SlippageFactor, WithdrawalBTC: f.WithdrawalBTC, NetworkLatencyBps: f.NetworkLatencyBps}
+				newFees[name] = spatial.FeeConfig{
+					TakerFee:          f.TakerFee,
+					SlippageFactor:    f.SlippageFactor,
+					WithdrawalBTC:     f.WithdrawalBTC,
+					NetworkLatencyBps: f.NetworkLatencyBps,
+				}
 			}
-			eng.SetFees(newFees)
+			spat.SetFees(newFees)
 			liveCfg.Fees = toFeeInfoMap(srcFees)
 		}
 
@@ -243,11 +256,16 @@ func main() {
 				}
 				liveCfg.Fees[name] = cur
 			}
-			newFees := make(map[string]engine.FeeConfig, len(liveCfg.Fees))
+			newFees := make(map[string]spatial.FeeConfig, len(liveCfg.Fees))
 			for name, f := range liveCfg.Fees {
-				newFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.Slippage, WithdrawalBTC: f.WithdrawalBTC, NetworkLatencyBps: f.NetworkLatencyBps}
+				newFees[name] = spatial.FeeConfig{
+					TakerFee:          f.TakerFee,
+					SlippageFactor:    f.Slippage,
+					WithdrawalBTC:     f.WithdrawalBTC,
+					NetworkLatencyBps: f.NetworkLatencyBps,
+				}
 			}
-			eng.SetFees(newFees)
+			spat.SetFees(newFees)
 		}
 
 		return liveCfg
@@ -259,7 +277,7 @@ func main() {
 
 	// --- Processing loop ---
 
-	go runProcessingLoop(ctx, cfg, agg, eng, rm, exec, hub, st, spreadModels, intervalCh, uptimeTracker)
+	go runProcessingLoop(ctx, cfg, agg, eng, rm, exec, hub, st, spat, intervalCh, uptimeTracker)
 
 	// --- Health snapshot ---
 
@@ -283,7 +301,7 @@ func main() {
 
 	// --- HTTP server ---
 
-	apiHandler := server.NewAPIHandler(st, rm, spreadStatsFn, getConfigFn, patchConfigFn, healthFn, cfg.AllowedOrigin, len(exchangeNames))
+	apiHandler := server.NewAPIHandler(st, rm, func() map[string]model.SpreadStats { return spat.SpreadStats() }, getConfigFn, patchConfigFn, healthFn, cfg.AllowedOrigin, len(exchangeNames))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)
@@ -312,8 +330,8 @@ func main() {
 	}
 }
 
-// runProcessingLoop consumes price updates from the aggregator, feeds the engine and
-// spread models, and on each ExecutionInterval tick executes the top opportunity.
+// runProcessingLoop consumes price updates from the aggregator, feeds the engine,
+// and on each ExecutionInterval tick executes the top opportunity.
 func runProcessingLoop(
 	ctx context.Context,
 	cfg *config.Config,
@@ -323,7 +341,7 @@ func runProcessingLoop(
 	exec *executor.Executor,
 	hub *server.Hub,
 	st *store.Store,
-	spreadModels map[string]*model.SpreadModel,
+	spat *spatial.SpatialStrategy,
 	intervalCh <-chan time.Duration,
 	uptimeTracker *uptime.Tracker,
 ) {
@@ -379,14 +397,15 @@ func runProcessingLoop(
 				return
 			}
 
-			// Engine processes the update (also updates spread models per pair).
+			// Engine processes the update (fans out to SpatialStrategy which also
+			// updates spread models per pair).
 			eng.ProcessUpdate(update)
 
 			// Publish price_update event to WebSocket clients (throttled by hub).
 			publishPriceUpdate(hub, update)
 
 			// Publish spread_stats so clients can compute z-scores (throttled by hub).
-			publishSpreadStats(hub, spreadModels)
+			publishSpreadStats(hub, spat)
 
 		case <-ticker.C:
 			// Attempt to execute the top-scoring opportunity.
@@ -491,15 +510,11 @@ func publishCircuitBreaker(hub *server.Hub, rm *risk.RiskManager) {
 	})
 }
 
-func publishSpreadStats(hub *server.Hub, spreadModels map[string]*model.SpreadModel) {
-	result := make([]model.SpreadStats, 0, len(spreadModels))
-	for k, m := range spreadModels {
-		result = append(result, model.SpreadStats{
-			Pair:    k,
-			Mean:    m.Mean(),
-			Std:     m.Std(),
-			Samples: m.N(),
-		})
+func publishSpreadStats(hub *server.Hub, spat *spatial.SpatialStrategy) {
+	stats := spat.SpreadStats()
+	result := make([]model.SpreadStats, 0, len(stats))
+	for _, s := range stats {
+		result = append(result, s)
 	}
 	hub.Publish(server.Event{Type: "spread_stats", Data: result})
 }
