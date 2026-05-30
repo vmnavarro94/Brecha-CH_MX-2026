@@ -25,6 +25,14 @@ export const PAIR_COLOR: Record<string, string> = {
 export interface ZPoint { t: number; z: number }
 export interface TradeMark { t: number; z: number; profit: number }
 
+export interface StrategyPnLRow {
+  strategy: string
+  total_pnl: number
+  trade_count: number
+  win_rate: number
+  total_volume: number
+}
+
 export interface LatencySummary {
   p50: number
   p99: number
@@ -48,6 +56,7 @@ interface MarketState {
   wsConnected: boolean
   lastTradeId: string | null
   lastOppId: string | null
+  strategyPnL: StrategyPnLRow[]
 }
 
 interface MarketActions {
@@ -61,6 +70,8 @@ interface MarketActions {
   setUptime: (data: Record<string, number>) => void
   setCircuitBreakerState: (state: CircuitBreakerState) => void
   setWsConnected: (connected: boolean) => void
+  setStrategyPnL: (rows: StrategyPnLRow[]) => void
+  fetchStrategyPnL: () => Promise<void>
 }
 
 function parseOpportunity(raw: RawOpportunity): Opportunity {
@@ -135,6 +146,7 @@ export const useMarketStore = create<MarketState & MarketActions>((set, _get) =>
   wsConnected: false,
   lastTradeId: null,
   lastOppId: null,
+  strategyPnL: [],
 
   setPrices: (raw) => set((s) => {
     const now = Date.now()
@@ -216,4 +228,19 @@ export const useMarketStore = create<MarketState & MarketActions>((set, _get) =>
   setUptime: (data) => set({ uptime: data }),
   setCircuitBreakerState: (state) => set({ circuitBreakerState: state }),
   setWsConnected: (connected) => set({ wsConnected: connected }),
+
+  setStrategyPnL: (rows) => set({ strategyPnL: rows }),
+
+  fetchStrategyPnL: async () => {
+    try {
+      const r = await fetch('/api/pnl-by-strategy')
+      if (!r.ok) return
+      const body = await r.json()
+      if (Array.isArray(body.strategies)) {
+        set({ strategyPnL: body.strategies as StrategyPnLRow[] })
+      }
+    } catch {
+      // silent — polled on next tick
+    }
+  },
 }))

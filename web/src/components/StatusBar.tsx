@@ -213,6 +213,10 @@ export default function StatusBar() {
     <header style={styles.header} id="bx-top">
       {/* Brand */}
       <div style={styles.brand}>
+        <div className="bx-mark bx-mark-lg" aria-hidden="true">
+          <span className="b1" />
+          <span className="b2" />
+        </div>
         <div>
           <div style={styles.brandName}>brecha</div>
           <div style={styles.brandSub}>Arbitrage Engine</div>
@@ -260,15 +264,24 @@ export default function StatusBar() {
           <span style={styles.statValue}>{tradeCount}</span>
         </div>
         {latency.samples >= 10 && (
-          <div style={styles.stat}>
-            <span style={styles.statKey}>Detect µs</span>
-            <span style={styles.statValue}>
-              p50 {latency.p50.toFixed(1)}
-              <small style={{ fontSize: '11px', color: 'var(--fg-3)' }}>
-                {' '}/ p99 {latency.p99.toFixed(1)}
-              </small>
-            </span>
-          </div>
+          <>
+            <div style={styles.stat}>
+              <span style={styles.statKey}>Detect µs</span>
+              <span style={styles.statValue}>
+                p50 {latency.p50.toFixed(1)}
+                <small style={{ fontSize: '11px', color: 'var(--fg-3)' }}>
+                  {' '}/ p99 {latency.p99.toFixed(1)}
+                </small>
+              </span>
+            </div>
+            <div style={styles.stat}>
+              <span style={styles.statKey}>Throughput</span>
+              <span style={styles.statValue}>
+                {latency.updatesPerSec.toFixed(0)}
+                <small style={{ fontSize: '11px', color: 'var(--fg-3)' }}> upd/s</small>
+              </span>
+            </div>
+          </>
         )}
       </div>
 

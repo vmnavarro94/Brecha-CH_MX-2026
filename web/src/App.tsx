@@ -12,6 +12,7 @@ import SpreadHeatmap from './components/SpreadHeatmap'
 import TopOpportunityBanner from './components/TopOpportunityBanner'
 import ReconnectBanner from './components/ReconnectBanner'
 import PerPairPnL from './components/PerPairPnL'
+import StrategyPnL from './components/StrategyPnL'
 
 export default function App() {
   useMarketSocket()
@@ -34,6 +35,9 @@ export default function App() {
         </div>
         <div className="bx-fullrow">
           <PerPairPnL />
+        </div>
+        <div className="bx-fullrow">
+          <StrategyPnL />
         </div>
         <div className="bx-fullrow">
           <TradeHistory />

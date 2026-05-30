@@ -1,13 +1,11 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState, useEffect } from 'react'
 import { Activity, Loader } from 'lucide-react'
-import { useMarketStore, FEATURED_PAIRS, PAIR_COLOR } from '../store/marketStore'
+import { useMarketStore, pairColor } from '../store/marketStore'
 import type { SpreadStats } from '../types/api'
 import type { ZPoint, TradeMark } from '../store/marketStore'
 
-const PAIR_LABEL: Record<string, string> = {
-  'binance-okx': 'Binance · OKX',
-  'binance-bybit': 'Binance · Bybit',
-  'okx-bybit': 'OKX · Bybit',
+function pairLabel(pair: string): string {
+  return pair.split('-').map((e) => e.charAt(0).toUpperCase() + e.slice(1)).join(' · ')
 }
 
 const Z_MIN = -3.5
@@ -151,11 +149,16 @@ export default function SpreadChart() {
   const zSeries = useMarketStore((s) => s.zSeries)
   const spreads = useMarketStore((s) => s.spreads)
   const tradeMarks = useMarketStore((s) => s.tradeMarks)
-  const [vis, setVis] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(FEATURED_PAIRS.map((p) => [p, true]))
-  )
+  const featuredPairs = useMarketStore((s) => s.featuredPairs)
+  const [vis, setVis] = useState<Record<string, boolean>>({})
   const [width, setWidth] = useState(760)
   const bodyRef = useRef<HTMLDivElement>(null)
+  const [now, setNow] = useState(Date.now())
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 100)
+    return () => clearInterval(id)
+  }, [])
 
   useLayoutEffect(() => {
     const el = bodyRef.current
@@ -169,7 +172,6 @@ export default function SpreadChart() {
   const W = Math.max(320, width)
   const plotW = W - PADL - PADR
   const plotH = CHART_H - PADT - PADB
-  const now = Date.now()
 
   const xOf = (t: number) =>
     PADL + Math.max(0, Math.min(1, (t - (now - WINDOW)) / WINDOW)) * plotW
@@ -179,8 +181,8 @@ export default function SpreadChart() {
   const statFor = (p: string): SpreadStats | undefined =>
     spreads.find((s) => s.Pair === p)
 
-  const warming = FEATURED_PAIRS.filter(
-    (p) => vis[p] && statFor(p) && (statFor(p)!.Samples < 100)
+  const warming = featuredPairs.filter(
+    (p) => vis[p] !== false && statFor(p) && (statFor(p)!.Samples < 100)
   )
 
   function pathFor(pair: string): string {
@@ -257,15 +259,15 @@ export default function SpreadChart() {
           />
 
           {/* Series lines */}
-          {FEATURED_PAIRS.map((pair) => {
-            if (!vis[pair]) return null
+          {featuredPairs.map((pair) => {
+            if (vis[pair] === false) return null
             const stat = statFor(pair)
             return (
               <path
                 key={pair}
                 d={pathFor(pair)}
                 fill="none"
-                stroke={PAIR_COLOR[pair]}
+                stroke={pairColor(pair, featuredPairs)}
                 strokeWidth="1.6"
                 strokeLinejoin="round"
                 strokeLinecap="round"
@@ -275,9 +277,9 @@ export default function SpreadChart() {
           })}
 
           {/* End-of-series dots */}
-          {FEATURED_PAIRS.map((pair) => {
+          {featuredPairs.map((pair) => {
             const arr = zSeries[pair]
-            if (!vis[pair] || !arr || !arr.length) return null
+            if (vis[pair] === false || !arr?.length) return null
             const last = arr[arr.length - 1]
             return (
               <circle
@@ -285,14 +287,14 @@ export default function SpreadChart() {
                 cx={xOf(last.t)}
                 cy={yOf(last.z)}
                 r="3"
-                fill={PAIR_COLOR[pair]}
+                fill={pairColor(pair, featuredPairs)}
               />
             )
           })}
 
           {/* Trade markers */}
-          {FEATURED_PAIRS.map((pair) => {
-            if (!vis[pair]) return null
+          {featuredPairs.map((pair) => {
+            if (vis[pair] === false) return null
             const marks: TradeMark[] = tradeMarks[pair] ?? []
             return marks
               .filter((m) => now - m.t < WINDOW)
@@ -324,7 +326,7 @@ export default function SpreadChart() {
 
       {/* Legend */}
       <div style={panelStyles.legend}>
-        {FEATURED_PAIRS.map((pair) => {
+        {featuredPairs.map((pair) => {
           const stat = statFor(pair)
           const arr = zSeries[pair]
           const z = arr && arr.length ? arr[arr.length - 1].z : 0
@@ -332,11 +334,11 @@ export default function SpreadChart() {
           return (
             <div
               key={pair}
-              style={panelStyles.legItem(vis[pair])}
+              style={panelStyles.legItem(vis[pair] !== false)}
               onClick={() => setVis((v) => ({ ...v, [pair]: !v[pair] }))}
             >
-              <span style={panelStyles.legSwatch(PAIR_COLOR[pair])} />
-              <span style={panelStyles.legLabel}>{PAIR_LABEL[pair]}</span>
+              <span style={panelStyles.legSwatch(pairColor(pair, featuredPairs))} />
+              <span style={panelStyles.legLabel}>{pairLabel(pair)}</span>
               <span style={panelStyles.legZ(hot)}>
                 z {z >= 0 ? '+' : '−'}{Math.abs(z).toFixed(2)}
               </span>
