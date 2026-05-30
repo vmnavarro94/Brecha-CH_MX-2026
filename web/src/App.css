@@ -50,10 +50,94 @@ body {
 
 .bx-cockpit {
   display: grid;
-  grid-template-columns: 1.52fr 1fr 260px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   gap: 14px;
-  max-width: 1920px;
+  align-items: start;
 }
+
+.bx-grid-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  grid-template-rows: 340px 280px 360px;
+  grid-template-areas:
+    "chart  prices"
+    "pnl    prices"
+    "heat   feed";
+  gap: 14px;
+  min-width: 0;
+}
+
+.bx-area {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.bx-area > * {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.bx-area--chart  { grid-area: chart; }
+.bx-area--pnl    { grid-area: pnl; }
+.bx-area--prices { grid-area: prices; }
+.bx-area--heat   { grid-area: heat; }
+.bx-area--feed   { grid-area: feed; }
+.bx-area--tweaks { align-self: start; }
+
+/* --- Responsive: stack into single column under 1024px --- */
+@media (max-width: 1023px) {
+  .bx-cockpit {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .bx-grid-main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto auto;
+    grid-template-areas:
+      "chart"
+      "prices"
+      "pnl"
+      "heat"
+      "feed";
+  }
+  .bx-area--prices,
+  .bx-area--feed {
+    min-height: 360px;
+  }
+  .bx-content {
+    padding: var(--sp-3);
+  }
+}
+
+@media (max-width: 640px) {
+  .bx-content {
+    padding: var(--sp-2);
+  }
+  /* StatusBar wraps; reduce horizontal padding so all stats fit. */
+}
+
+/* Brecha mark — two offset orange bars */
+.bx-mark {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.bx-mark .b1,
+.bx-mark .b2 {
+  height: 7px;
+  border-radius: 4px;
+  background: var(--orange);
+}
+.bx-mark .b1 { width: 22px; }
+.bx-mark .b2 { width: 22px; margin-left: 6px; }
+.bx-mark-lg .b1,
+.bx-mark-lg .b2 {
+  height: 9px;
+  width: 28px;
+}
+.bx-mark-lg .b2 { margin-left: 8px; }
 
 .bx-col {
   display: flex;
