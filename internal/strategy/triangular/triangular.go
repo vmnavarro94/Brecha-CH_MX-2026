@@ -38,12 +38,22 @@ type Config struct {
 // TriangularStrategy detects triangular arbitrage opportunities on a single exchange.
 // It checks both directed 3-cycles of the USDT/BTC/ETH graph and emits if the
 // net gain after 3*TakerFee exceeds MinNetProfit.
+//
+// THREE INDEPENDENT PRICES are required for triangular arb. The BTC/USDT pair
+// comes from the live WS feed; ETH/USDT and BTC/ETH are seeded per exchange
+// with independent noise. Without an independent BTC/ETH market price, the
+// cycle math collapses to BTC bid-ask spread (which is not triangular arb).
+//
 // All mutable fields are protected by mu for concurrent safety.
 type TriangularStrategy struct {
 	mu  sync.RWMutex
 	cfg Config
 	// refs maps exchange → seeded ETH/USDT reference price.
 	refs map[string]float64
+	// ethBtc maps exchange → seeded BTC/ETH market cross rate (price of 1 ETH in BTC).
+	// This is independent of ethRef/btcMid (the implied cross). Divergence between
+	// market and implied is the arbitrage signal.
+	ethBtc map[string]float64
 	// last maps exchange → last emission time (for cooldown guard).
 	last map[string]time.Time
 	// lastRefresh maps exchange → last time refs[exchange] was refreshed.
@@ -56,10 +66,21 @@ func New(cfg Config) *TriangularStrategy {
 	return &TriangularStrategy{
 		cfg:         cfg,
 		refs:        make(map[string]float64),
+		ethBtc:      make(map[string]float64),
 		last:        make(map[string]time.Time),
 		lastRefresh: make(map[string]time.Time),
 		rng:         rand.New(rand.NewSource(cfg.Seed)),
 	}
+}
+
+// SeedRefs forces both the ETH/USDT reference and the BTC/ETH market cross rate
+// for an exchange. Test helper for deterministic math; production uses lazy
+// initialization with PRNG noise on first Detect call.
+func (t *TriangularStrategy) SeedRefs(exchange string, ethRef, ethBtcMarket float64) {
+	t.mu.Lock()
+	t.refs[exchange] = ethRef
+	t.ethBtc[exchange] = ethBtcMarket
+	t.mu.Unlock()
 }
 
 // Name returns the stable strategy identifier.
@@ -108,29 +129,37 @@ func (t *TriangularStrategy) Detect(
 	btcMid := (askF + bidF) / 2.0
 	ethRef := t.refs[exchange]
 
-	// Explicit 2-cycle ratio check (equivalent to Bellman-Ford negative-cycle detection
-	// on the 3-vertex log-weight graph {USDT, BTC, ETH}).
+	// Seed ethBtcMarket lazily — independent of refs[exchange]. Derived from current
+	// btcMid + own PRNG noise. Without this independent observation the cycle math
+	// collapses to BTC bid-ask spread, which is not triangular arbitrage.
+	if _, ok := t.ethBtc[exchange]; !ok {
+		implied := ethRef / btcMid
+		crossNoise := (t.rng.Float64()*2 - 1) * t.cfg.NoiseRange
+		t.ethBtc[exchange] = implied * (1 + crossNoise)
+	}
+	// Lazy refresh: ethBtcMarket drifts on the same schedule as refs.
+	if t.cfg.RefreshEvery > 0 && now.Sub(t.lastRefresh[exchange]) >= t.cfg.RefreshEvery {
+		drift := (t.rng.Float64()*2 - 1) * t.cfg.NoiseRange
+		t.ethBtc[exchange] *= (1 + drift)
+	}
+	ethBtcMarket := t.ethBtc[exchange]
+
+	// Triangular arb requires 3 INDEPENDENT prices:
+	//   BTC/USDT  from WS feed (ask, bid, btcMid)
+	//   ETH/USDT  from refs[exchange]
+	//   BTC/ETH   from ethBtc[exchange] (MARKET cross, NOT the ethRef/btcMid implied)
+	// The arbitrage signal is divergence between ethBtcMarket and the implied
+	// ethRef/btcMid. When they match, both cycle ratios collapse to ≈ 1.0.
 	//
 	// Cycle A (USDT → BTC → ETH → USDT):
-	//   leg1: buy BTC with USDT at ask  → 1 USDT becomes 1/ask BTC
-	//   leg2: buy ETH with BTC at cross rate ETH/BTC = ethRef/btcMid
-	//         → (1/ask) * (btcMid/ethRef) ETH    [i.e. sell BTC for ETH]
-	//   leg3: sell ETH for USDT at ethRef
-	//         → (1/ask)*(btcMid/ethRef)*ethRef = btcMid/ask USDT
-	//   ratioA = btcMid / ask
+	//   1 USDT → 1/ask BTC → (1/ask)/ethBtcMarket ETH → (1/ask)*ethRef/ethBtcMarket USDT
+	//   ratioA = ethRef / (ask * ethBtcMarket)
 	//
 	// Cycle B (USDT → ETH → BTC → USDT):
-	//   leg1: buy ETH with USDT at ethRef → 1/ethRef ETH
-	//   leg2: sell ETH for BTC at ETH/BTC = ethRef/btcMid
-	//         → (1/ethRef)*(ethRef/btcMid) = 1/btcMid BTC
-	//   leg3: sell BTC for USDT at bid → (1/btcMid)*bid = bid/btcMid USDT
-	//   ratioB = bid / btcMid
-	//
-	// Balanced market: bid ≈ ask ≈ btcMid → ratioA ≈ 1.0, ratioB ≈ 1.0 → no opportunity.
-	// Divergence (bid > ask spread): ratioA and ratioB both exceed 1.0 → potential opportunity.
-	_ = ethRef // ethRef is used implicitly through btcMid derivation; kept for reference seeding
-	ratioA := btcMid / askF
-	ratioB := bidF / btcMid
+	//   1 USDT → 1/ethRef ETH → (ethBtcMarket/ethRef) BTC → (ethBtcMarket * bid)/ethRef USDT
+	//   ratioB = (ethBtcMarket * bid) / ethRef
+	ratioA := ethRef / (askF * ethBtcMarket)
+	ratioB := (ethBtcMarket * bidF) / ethRef
 
 	cycleGain := ratioA
 	if ratioB > ratioA {
