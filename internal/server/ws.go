@@ -26,6 +26,7 @@ var throttledEventTypes = map[string]bool{
 	"price_update":  true,
 	"spread_stats":  true,
 	"latency_stats": true,
+	"uptime_stats":  true,
 }
 
 // Event is a server-sent message envelope.

@@ -51,7 +51,8 @@ export function useMarketSocket() {
         case 'pnl_update':      store.setPnL(ev.data); break
         case 'circuit_breaker': store.setCircuitBreakerState(ev.data.state); break
         case 'spread_stats':    store.setSpreads(ev.data); break
-        case 'latency_stats':   store.setLatency(ev.data.p50_us, ev.data.p99_us, ev.data.samples); break
+        case 'latency_stats':   store.setLatency(ev.data.p50_us, ev.data.p99_us, ev.data.samples, ev.data.updates_per_sec); break
+        case 'uptime_stats':    store.setUptime(ev.data); break
       }
     }
 

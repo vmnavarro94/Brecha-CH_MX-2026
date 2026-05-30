@@ -44,6 +44,7 @@ interface MarketState {
   circuitBreakerState: CircuitBreakerState
   pnl: PnLSummary
   latency: LatencySummary
+  uptime: Record<string, number>
   wsConnected: boolean
   lastTradeId: string | null
   lastOppId: string | null
@@ -57,6 +58,7 @@ interface MarketActions {
   setPnL: (summary: { total_pnl: string; trade_count: number; win_rate: number }) => void
   setSpreads: (stats: SpreadStats[]) => void
   setLatency: (p50: number, p99: number, samples: number, updatesPerSec: number) => void
+  setUptime: (data: Record<string, number>) => void
   setCircuitBreakerState: (state: CircuitBreakerState) => void
   setWsConnected: (connected: boolean) => void
 }
@@ -129,6 +131,7 @@ export const useMarketStore = create<MarketState & MarketActions>((set, _get) =>
   circuitBreakerState: 'active',
   pnl: { total_pnl: 0, trade_count: 0, win_rate: 0 },
   latency: { p50: 0, p99: 0, samples: 0, updatesPerSec: 0 },
+  uptime: {},
   wsConnected: false,
   lastTradeId: null,
   lastOppId: null,
@@ -210,6 +213,7 @@ export const useMarketStore = create<MarketState & MarketActions>((set, _get) =>
   }),
 
   setLatency: (p50, p99, samples, updatesPerSec) => set({ latency: { p50, p99, samples, updatesPerSec } }),
+  setUptime: (data) => set({ uptime: data }),
   setCircuitBreakerState: (state) => set({ circuitBreakerState: state }),
   setWsConnected: (connected) => set({ wsConnected: connected }),
 }))

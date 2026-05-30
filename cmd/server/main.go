@@ -25,6 +25,7 @@ import (
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/server"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/store"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/uptime"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/wallet"
 )
 
@@ -249,9 +250,13 @@ func main() {
 		return liveCfg
 	}
 
+	// --- Uptime tracker ---
+
+	uptimeTracker := uptime.NewTracker()
+
 	// --- Processing loop ---
 
-	go runProcessingLoop(ctx, cfg, agg, eng, rm, exec, hub, st, spreadModels, intervalCh)
+	go runProcessingLoop(ctx, cfg, agg, eng, rm, exec, hub, st, spreadModels, intervalCh, uptimeTracker)
 
 	// --- HTTP server ---
 
@@ -297,6 +302,7 @@ func runProcessingLoop(
 	st *store.Store,
 	spreadModels map[string]*model.SpreadModel,
 	intervalCh <-chan time.Duration,
+	uptimeTracker *uptime.Tracker,
 ) {
 	ticker := time.NewTicker(cfg.ExecutionInterval)
 	defer ticker.Stop()
@@ -335,6 +341,15 @@ func runProcessingLoop(
 			prevProcessed = cur
 			prevTickAt = now
 			publishLatencyStats(hub, eng, rate)
+
+			// Sample uptime: each exchange is "fresh" if its last update is < 10s old.
+			snap := agg.Snapshot()
+			for _, ex := range exchangeNames {
+				p, ok := snap[ex]
+				fresh := ok && now.Sub(p.ReceivedAt) < 10*time.Second
+				uptimeTracker.Sample(ex, fresh)
+			}
+			publishUptimeStats(hub, uptimeTracker)
 
 		case update, ok := <-agg.Updates():
 			if !ok {
@@ -486,6 +501,13 @@ func publishPnL(hub *server.Hub, st *store.Store) {
 		"win_rate":    winRate,
 	})
 	hub.Publish(server.Event{Type: "pnl_update", Data: json.RawMessage(b)})
+}
+
+func publishUptimeStats(hub *server.Hub, tracker *uptime.Tracker) {
+	hub.Publish(server.Event{
+		Type: "uptime_stats",
+		Data: tracker.Snapshot(),
+	})
 }
 
 func publishLatencyStats(hub *server.Hub, eng *engine.Engine, updatesPerSec float64) {

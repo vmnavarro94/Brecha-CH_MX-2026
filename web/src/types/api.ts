@@ -109,3 +109,4 @@ export type ServerEvent =
   | { type: 'circuit_breaker'; data: { state: CircuitBreakerState } }
   | { type: 'spread_stats'; data: SpreadStats[] }
   | { type: 'latency_stats'; data: { p50_us: number; p99_us: number; samples: number; updates_per_sec: number } }
+  | { type: 'uptime_stats'; data: Record<string, number> }

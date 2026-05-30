@@ -84,9 +84,12 @@ interface PriceRowProps {
   ex: Exchange
   p: PriceData | null
   now: number
+  isMaxBid: boolean
+  isMinAsk: boolean
+  uptimePct: number
 }
 
-function PriceRow({ ex, p, now }: PriceRowProps) {
+function PriceRow({ ex, p, now, isMaxBid, isMinAsk, uptimePct }: PriceRowProps) {
   const prevRef = useRef<{ bid: number | null; ask: number | null }>({ bid: null, ask: null })
   const [flash, setFlash] = useState({ bid: '', ask: '' })
   const meta = EX_META[ex]
@@ -158,13 +161,16 @@ function PriceRow({ ex, p, now }: PriceRowProps) {
             fontFamily: 'var(--font-mono)',
             fontVariantNumeric: 'tabular-nums',
             fontSize: '13px',
-            color: 'var(--fg-1)',
+            color: isMaxBid ? 'var(--up)' : 'var(--fg-1)',
+            fontWeight: isMaxBid ? 600 : 400,
             background: flashBg(flash.bid),
-            padding: '2px 4px',
+            border: isMaxBid ? '1px solid var(--up)' : '1px solid transparent',
+            padding: '2px 6px',
             borderRadius: 'var(--r-xs)',
             transition: 'background 0.1s',
             display: 'inline-block',
           }}
+          title={isMaxBid ? 'Highest bid — best sell price' : undefined}
         >
           {p ? px2(p.bid) : '—'}
         </span>
@@ -175,13 +181,16 @@ function PriceRow({ ex, p, now }: PriceRowProps) {
             fontFamily: 'var(--font-mono)',
             fontVariantNumeric: 'tabular-nums',
             fontSize: '13px',
-            color: 'var(--fg-1)',
+            color: isMinAsk ? 'var(--orange)' : 'var(--fg-1)',
+            fontWeight: isMinAsk ? 600 : 400,
             background: flashBg(flash.ask),
-            padding: '2px 4px',
+            border: isMinAsk ? '1px solid var(--orange)' : '1px solid transparent',
+            padding: '2px 6px',
             borderRadius: 'var(--r-xs)',
             transition: 'background 0.1s',
             display: 'inline-block',
           }}
+          title={isMinAsk ? 'Lowest ask — best buy price' : undefined}
         >
           {p ? px2(p.ask) : '—'}
         </span>
@@ -221,6 +230,19 @@ function PriceRow({ ex, p, now }: PriceRowProps) {
           />
           {statusLabel}
         </span>
+        {uptimePct > 0 && (
+          <span
+            style={{
+              marginLeft: 8,
+              fontFamily: 'var(--font-mono)',
+              fontSize: '10px',
+              color: uptimePct >= 0.95 ? 'var(--up)' : uptimePct >= 0.7 ? 'var(--warn)' : 'var(--down)',
+            }}
+            title="Uptime de la sesión"
+          >
+            {(uptimePct * 100).toFixed(1)}%
+          </span>
+        )}
       </td>
     </tr>
   )
@@ -228,6 +250,7 @@ function PriceRow({ ex, p, now }: PriceRowProps) {
 
 function PriceTable() {
   const prices = useMarketStore((s) => s.prices)
+  const uptime = useMarketStore((s) => s.uptime)
   const [now, setNow] = useState(Date.now())
 
   useEffect(() => {
@@ -235,13 +258,40 @@ function PriceTable() {
     return () => clearInterval(iv)
   }, [])
 
+  let maxBidEx: Exchange | null = null
+  let minAskEx: Exchange | null = null
+  let maxBid = -Infinity
+  let minAsk = Infinity
+  for (const ex of EXCHANGES) {
+    const p = prices[ex]
+    if (!p || now - p.receivedAt > 10_000) continue
+    if (p.bid > maxBid) { maxBid = p.bid; maxBidEx = ex }
+    if (p.ask < minAsk) { minAsk = p.ask; minAskEx = ex }
+  }
+
+  const arbPct =
+    maxBidEx && minAskEx && maxBidEx !== minAskEx && minAsk > 0
+      ? ((maxBid - minAsk) / minAsk) * 100
+      : null
+
   return (
     <div style={tableStyles.panel} id="bx-prices">
       <div style={tableStyles.head}>
         <span style={tableStyles.eyebrow}>
           <Radio size={13} strokeWidth={1.75} /> Precios en vivo · BBO
         </span>
-        <span style={tableStyles.meta}>BTC/USDT · 250 ms</span>
+        <span style={tableStyles.meta}>
+          {arbPct != null && arbPct > 0 ? (
+            <>
+              <span style={{ color: 'var(--up)', fontWeight: 600 }}>
+                +{arbPct.toFixed(4)}%
+              </span>{' '}
+              gross · BTC/USDT
+            </>
+          ) : (
+            'BTC/USDT · 250 ms'
+          )}
+        </span>
       </div>
       <table style={tableStyles.table}>
         <thead>
@@ -255,7 +305,15 @@ function PriceTable() {
         </thead>
         <tbody>
           {EXCHANGES.map((ex) => (
-            <PriceRow key={ex} ex={ex} p={prices[ex]} now={now} />
+            <PriceRow
+              key={ex}
+              ex={ex}
+              p={prices[ex]}
+              now={now}
+              isMaxBid={ex === maxBidEx}
+              isMinAsk={ex === minAskEx}
+              uptimePct={uptime[ex] ?? 0}
+            />
           ))}
         </tbody>
       </table>
