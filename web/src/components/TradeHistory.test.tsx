@@ -18,6 +18,8 @@ function makeTrade(overrides: Partial<Trade> = {}): Trade {
     NetProfit: 9.5,
     Slippage: 0.1,
     ExecutedAt: new Date().toISOString(),
+    RequestedVolume: 0.001,
+    PartialFill: false,
     ...overrides,
   }
 }
@@ -94,5 +96,19 @@ describe('TradeHistory', () => {
     render(<TradeHistory />)
     // footer shows +$50.00
     expect(screen.getByText('+$50.00')).toBeInTheDocument()
+  })
+
+  it('row with PartialFill=true renders a "parcial" badge', () => {
+    const trade = makeTrade({ PartialFill: true, RequestedVolume: 0.01, Volume: 0.005 })
+    useMarketStore.setState({ trades: [trade] })
+    render(<TradeHistory />)
+    expect(screen.getByText('parcial')).toBeInTheDocument()
+  })
+
+  it('row with PartialFill=false does not render a "parcial" badge', () => {
+    const trade = makeTrade({ PartialFill: false })
+    useMarketStore.setState({ trades: [trade] })
+    render(<TradeHistory />)
+    expect(screen.queryByText('parcial')).not.toBeInTheDocument()
   })
 })

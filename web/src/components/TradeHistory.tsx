@@ -241,6 +241,19 @@ export default function TradeHistory() {
                 <td style={styles.tdR}>
                   {t.Volume.toFixed(8)}{' '}
                   <span style={{ color: 'var(--fg-3)', fontSize: '10px' }}>BTC</span>
+                  {t.PartialFill && (
+                    <span style={{
+                      marginLeft: '6px',
+                      padding: '1px 5px',
+                      borderRadius: '3px',
+                      background: 'var(--orange)',
+                      color: 'var(--bg)',
+                      fontSize: '9px',
+                      fontWeight: 700,
+                      letterSpacing: '0.05em',
+                      textTransform: 'uppercase' as const,
+                    }}>parcial</span>
+                  )}
                 </td>
                 <td style={styles.tdR}>{fmtUsd(t.BuyPrice)}</td>
                 <td style={styles.tdR}>{fmtUsd(t.SellPrice)}</td>

@@ -38,6 +38,8 @@ export interface Trade {
   NetProfit: number
   Slippage: number
   ExecutedAt: string
+  RequestedVolume: number
+  PartialFill: boolean
 }
 
 export interface SpreadStats {
@@ -94,6 +96,8 @@ export interface RawTrade {
   NetProfit: string
   Slippage: string
   ExecutedAt: string
+  RequestedVolume?: string
+  PartialFill?: boolean
 }
 
 export type ServerEvent =
@@ -104,4 +108,4 @@ export type ServerEvent =
   | { type: 'pnl_update'; data: { total_pnl: string; trade_count: number; win_rate: number } }
   | { type: 'circuit_breaker'; data: { state: CircuitBreakerState } }
   | { type: 'spread_stats'; data: SpreadStats[] }
-  | { type: 'latency_stats'; data: { p50_us: number; p99_us: number; samples: number } }
+  | { type: 'latency_stats'; data: { p50_us: number; p99_us: number; samples: number; updates_per_sec: number } }

@@ -29,6 +29,7 @@ export interface LatencySummary {
   p50: number
   p99: number
   samples: number
+  updatesPerSec: number
 }
 
 interface MarketState {
@@ -55,7 +56,7 @@ interface MarketActions {
   setTrades: (raws: RawTrade[]) => void
   setPnL: (summary: { total_pnl: string; trade_count: number; win_rate: number }) => void
   setSpreads: (stats: SpreadStats[]) => void
-  setLatency: (p50: number, p99: number, samples: number) => void
+  setLatency: (p50: number, p99: number, samples: number, updatesPerSec: number) => void
   setCircuitBreakerState: (state: CircuitBreakerState) => void
   setWsConnected: (connected: boolean) => void
 }
@@ -84,6 +85,8 @@ function parseTrade(raw: RawTrade): Trade {
     Fees: parseFloat(raw.Fees),
     NetProfit: parseFloat(raw.NetProfit),
     Slippage: parseFloat(raw.Slippage),
+    RequestedVolume: raw.RequestedVolume != null ? parseFloat(raw.RequestedVolume) : 0,
+    PartialFill: raw.PartialFill ?? false,
   }
 }
 
@@ -125,7 +128,7 @@ export const useMarketStore = create<MarketState & MarketActions>((set, _get) =>
   tradeMarks: {},
   circuitBreakerState: 'active',
   pnl: { total_pnl: 0, trade_count: 0, win_rate: 0 },
-  latency: { p50: 0, p99: 0, samples: 0 },
+  latency: { p50: 0, p99: 0, samples: 0, updatesPerSec: 0 },
   wsConnected: false,
   lastTradeId: null,
   lastOppId: null,
@@ -206,7 +209,7 @@ export const useMarketStore = create<MarketState & MarketActions>((set, _get) =>
     return { spreads: stats, featuredPairs: featured, zSeries }
   }),
 
-  setLatency: (p50, p99, samples) => set({ latency: { p50, p99, samples } }),
+  setLatency: (p50, p99, samples, updatesPerSec) => set({ latency: { p50, p99, samples, updatesPerSec } }),
   setCircuitBreakerState: (state) => set({ circuitBreakerState: state }),
   setWsConnected: (connected) => set({ wsConnected: connected }),
 }))
