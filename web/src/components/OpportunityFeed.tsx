@@ -45,7 +45,8 @@ const styles = {
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column' as const,
-    maxHeight: '480px',
+    height: '100%',
+    minHeight: 0,
   } as React.CSSProperties,
 
   head: {
@@ -180,32 +181,48 @@ const styles = {
   scoreWrap: {
     display: 'flex',
     alignItems: 'center',
-    gap: '5px',
+    gap: '7px',
     marginLeft: 'auto',
   } as React.CSSProperties,
 
+  scoreLabel: {
+    fontFamily: 'var(--font-mono)',
+    fontSize: '9px',
+    color: 'var(--fg-3)',
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase' as const,
+  } as React.CSSProperties,
+
   scoreBar: {
-    width: '50px',
-    height: '4px',
-    background: 'var(--line)',
+    width: '78px',
+    height: '6px',
+    background: 'var(--bg-inset)',
+    border: '1px solid var(--line-faint)',
     borderRadius: 'var(--r-pill)',
     overflow: 'hidden',
   } as React.CSSProperties,
 
-  scoreBarFill: (pct: number) =>
+  scoreBarFill: (pct: number, hot: boolean) =>
     ({
       height: '100%',
       width: `${pct}%`,
-      background: 'linear-gradient(90deg, var(--orange-dim), var(--orange))',
+      background: hot
+        ? 'linear-gradient(90deg, var(--orange), var(--orange-bright))'
+        : 'linear-gradient(90deg, var(--orange-dim), var(--orange))',
       borderRadius: 'var(--r-pill)',
+      boxShadow: hot ? '0 0 6px var(--orange)' : 'none',
+      transition: 'width 200ms ease-out',
     } as React.CSSProperties),
 
-  scoreVal: {
-    fontFamily: 'var(--font-mono)',
-    fontVariantNumeric: 'tabular-nums',
-    fontSize: '10px',
-    color: 'var(--fg-3)',
-  } as React.CSSProperties,
+  scoreVal: (hot: boolean) =>
+    ({
+      fontFamily: 'var(--font-mono)',
+      fontVariantNumeric: 'tabular-nums',
+      fontSize: '11px',
+      fontWeight: 600,
+      color: hot ? 'var(--orange)' : 'var(--fg-2)',
+      minWidth: '32px',
+    } as React.CSSProperties),
 }
 
 interface OppRowProps {
@@ -241,10 +258,11 @@ function OppRow({ op, fresh }: OppRowProps) {
           </span>
         </span>
         <span style={styles.scoreWrap}>
+          <span style={styles.scoreLabel}>score</span>
           <span style={styles.scoreBar}>
-            <span style={styles.scoreBarFill(op.Score * 100)} />
+            <span style={styles.scoreBarFill(op.Score * 100, op.Score >= 0.5)} />
           </span>
-          <span style={styles.scoreVal}>{op.Score.toFixed(2)}</span>
+          <span style={styles.scoreVal(op.Score >= 0.5)}>{op.Score.toFixed(2)}</span>
         </span>
       </div>
     </div>
