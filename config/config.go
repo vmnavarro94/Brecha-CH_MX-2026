@@ -37,6 +37,17 @@ type Config struct {
 	InitialBTCPerExchange  float64
 
 	AllowedOrigin string
+	DataDir       string
+
+	// DemoMode uses VIP-tier fees so the engine can detect opportunities with real
+	// market data. Set DEMO_MODE=false (and raise MIN_NET_PROFIT_PCT) for production.
+	DemoMode bool
+
+	// Synthetic order book depth parameters.
+	DepthLevels    int
+	DepthStepPct   float64
+	DepthMinQtyBTC float64
+	DepthMaxQtyBTC float64
 }
 
 func Load() *Config {
@@ -64,7 +75,13 @@ func Load() *Config {
 		CircuitBreakerPauseMins: getEnvInt("CIRCUIT_BREAKER_PAUSE_MINUTES", 5),
 		InitialUSDTPerExchange: getEnvFloat("INITIAL_USDT_PER_EXCHANGE", 10000),
 		InitialBTCPerExchange:  getEnvFloat("INITIAL_BTC_PER_EXCHANGE", 0.1),
-		AllowedOrigin:      getEnv("ALLOWED_ORIGIN", "http://localhost:3000"),
+		AllowedOrigin:  getEnv("ALLOWED_ORIGIN", "http://localhost:3000"),
+		DataDir:        getEnv("DATA_DIR", "./data"),
+		DemoMode:       getEnvBool("DEMO_MODE", false),
+		DepthLevels:    getEnvInt("DEPTH_LEVELS", 5),
+		DepthStepPct:   getEnvFloat("DEPTH_STEP_PCT", 0.00005),
+		DepthMinQtyBTC: getEnvFloat("DEPTH_MIN_QTY_BTC", 0.005),
+		DepthMaxQtyBTC: getEnvFloat("DEPTH_MAX_QTY_BTC", 0.025),
 	}
 }
 
@@ -80,6 +97,13 @@ func getEnvInt(key string, fallback int) int {
 		if i, err := strconv.Atoi(v); err == nil {
 			return i
 		}
+	}
+	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		return v == "true" || v == "1"
 	}
 	return fallback
 }

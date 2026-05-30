@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/depth"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/store"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/wallet"
@@ -21,23 +22,25 @@ var (
 	ErrInsufficientBalance = errors.New("insufficient balance")
 )
 
-// Executor simulates trade execution: validates freshness, computes volume, updates wallets,
-// and persists the trade record.
+// Executor simulates trade execution: validates freshness, walks the synthetic order book,
+// computes VWAP, updates wallets, and persists the trade record.
 type Executor struct {
 	wallet             *wallet.MultiWallet
 	store              *store.Store
 	snapshotFn         func() map[string]types.PriceUpdate
 	clock              types.Clock
 	stalenessThreshold time.Duration
+	depthCfg           depth.Config
 }
 
-// NewExecutor creates a new Executor.
+// NewExecutor creates a new Executor with depth.Config for synthetic book generation.
 func NewExecutor(
 	w *wallet.MultiWallet,
 	st *store.Store,
 	snapshotFn func() map[string]types.PriceUpdate,
 	clock types.Clock,
 	stalenessThreshold time.Duration,
+	depthCfg depth.Config,
 ) *Executor {
 	return &Executor{
 		wallet:             w,
@@ -45,6 +48,7 @@ func NewExecutor(
 		snapshotFn:         snapshotFn,
 		clock:              clock,
 		stalenessThreshold: stalenessThreshold,
+		depthCfg:           depthCfg,
 	}
 }
 
@@ -53,9 +57,11 @@ func NewExecutor(
 // It:
 //  1. Verifies both exchange prices are fresh (within stalenessThreshold).
 //  2. Computes volume = min(opp.MaxVolume, walletBalance/currentAsk).
-//  3. Debits USDT and credits BTC on the buy exchange.
-//  4. Debits BTC and credits USDT on the sell exchange.
-//  5. Persists a Trade record and marks the opportunity Executed.
+//  3. Walks the synthetic ask book for the buy leg (VWAP-priced).
+//  4. Debits USDT and credits BTC on the buy exchange.
+//  5. Walks the synthetic bid book for the sell leg (VWAP-priced).
+//  6. If sell fill < buy fill → atomically reverses the buy using exact VWAP cost.
+//  7. Persists a Trade record and marks the opportunity Executed.
 //
 // Returns ErrStalePrice when either price is stale (status → Expired).
 // Returns ErrInsufficientBalance when computed volume is zero (status → Skipped).
@@ -79,62 +85,104 @@ func (e *Executor) Execute(opp *types.Opportunity) error {
 		return ErrStalePrice
 	}
 
-	currentAsk, _ := buyPrice.Ask.Float64()
-	currentBid, _ := sellPrice.Bid.Float64()
+	bboAsk := buyPrice.Ask
+	bboBid := sellPrice.Bid
+	currentAskF, _ := bboAsk.Float64()
 
 	// Compute volume.
 	usdtBalance := e.wallet.Balance(opp.BuyExchange, "USDT")
 	maxVolF, _ := opp.MaxVolume.Float64()
 
-	maxByBalance := usdtBalance / currentAsk
-	volume := math.Min(maxVolF, maxByBalance)
+	maxByBalance := usdtBalance / currentAskF
+	volumeF := math.Min(maxVolF, maxByBalance)
 
-	if volume <= 0 {
+	if volumeF <= 0 {
 		opp.Status = types.StatusSkipped
 		e.store.Save(*opp)
 		return ErrInsufficientBalance
 	}
 
-	// Execute buy side: debit USDT, credit BTC.
-	cost := volume * currentAsk
-	if err := e.wallet.Debit(opp.BuyExchange, "USDT", cost); err != nil {
-		opp.Status = types.StatusSkipped
-		e.store.Save(*opp)
-		return ErrInsufficientBalance
-	}
-	e.wallet.Credit(opp.BuyExchange, "BTC", volume)
+	targetVolume := decimal.NewFromFloat(volumeF)
 
-	// Execute sell side: debit BTC, credit USDT.
-	if err := e.wallet.Debit(opp.SellExchange, "BTC", volume); err != nil {
-		// Reverse the buy side.
-		e.wallet.Debit(opp.BuyExchange, "BTC", volume)
-		e.wallet.Credit(opp.BuyExchange, "USDT", cost)
+	// --- Buy leg: walk the ask book ---
+	askLevels := depth.AskLevels(bboAsk, e.depthCfg)
+	buyFilled, vwapBuy, buyPartial := depth.Walk(askLevels, targetVolume)
+
+	if buyFilled.IsZero() {
 		opp.Status = types.StatusSkipped
 		e.store.Save(*opp)
 		return ErrInsufficientBalance
 	}
-	proceeds := volume * currentBid
+
+	buyFilledF, _ := buyFilled.Float64()
+	vwapBuyF, _ := vwapBuy.Float64()
+	costBuy := buyFilled.Mul(vwapBuy)
+	costBuyF, _ := costBuy.Float64()
+
+	// Debit USDT, credit BTC on buy exchange.
+	if err := e.wallet.Debit(opp.BuyExchange, "USDT", costBuyF); err != nil {
+		opp.Status = types.StatusSkipped
+		e.store.Save(*opp)
+		return ErrInsufficientBalance
+	}
+	e.wallet.Credit(opp.BuyExchange, "BTC", buyFilledF)
+
+	// --- Sell leg: walk the bid book ---
+	bidLevels := depth.BidLevels(bboBid, e.depthCfg)
+	sellFilled, vwapSell, _ := depth.Walk(bidLevels, buyFilled)
+	sellFilledF, _ := sellFilled.Float64()
+
+	// Atomic-or-nothing: if sell side can't fill what buy side filled → reverse.
+	if sellFilled.LessThan(buyFilled) {
+		// Reverse the buy side using VWAP cost (not BBO * volume).
+		e.wallet.Debit(opp.BuyExchange, "BTC", buyFilledF)
+		e.wallet.Credit(opp.BuyExchange, "USDT", costBuyF)
+		opp.Status = types.StatusSkipped
+		e.store.Save(*opp)
+		return ErrInsufficientBalance
+	}
+
+	// Debit BTC, credit USDT on sell exchange.
+	if err := e.wallet.Debit(opp.SellExchange, "BTC", sellFilledF); err != nil {
+		// Reverse the buy side using VWAP cost.
+		e.wallet.Debit(opp.BuyExchange, "BTC", buyFilledF)
+		e.wallet.Credit(opp.BuyExchange, "USDT", costBuyF)
+		opp.Status = types.StatusSkipped
+		e.store.Save(*opp)
+		return ErrInsufficientBalance
+	}
+	vwapSellF, _ := vwapSell.Float64()
+	proceeds := sellFilledF * vwapSellF
 	e.wallet.Credit(opp.SellExchange, "USDT", proceeds)
 
-	// Compute profit.
-	grossProfit := (currentBid - currentAsk) * volume
-	// Fees are tracked externally by the engine; executor records gross as net for simulation.
+	// --- Compute profit and slippage ---
+	grossProfit := (vwapSellF - vwapBuyF) * sellFilledF
 	netProfit := grossProfit
+
+	bboAskF, _ := bboAsk.Float64()
+	bboBidF, _ := bboBid.Float64()
+	slippage := (vwapBuyF - bboAskF) + (bboBidF - vwapSellF)
+
+	// Partial fill detection: use the original requested volume.
+	partialFill := buyPartial
+	requestedVolume := targetVolume
 
 	// Persist trade record.
 	trade := types.Trade{
-		ID:            uuid.New().String(),
-		OpportunityID: opp.ID,
-		BuyExchange:   opp.BuyExchange,
-		SellExchange:  opp.SellExchange,
-		BuyPrice:      decimal.NewFromFloat(currentAsk),
-		SellPrice:     decimal.NewFromFloat(currentBid),
-		Volume:        decimal.NewFromFloat(volume),
-		GrossProfit:   decimal.NewFromFloat(grossProfit),
-		Fees:          decimal.Zero,
-		NetProfit:     decimal.NewFromFloat(netProfit),
-		Slippage:      decimal.Zero,
-		ExecutedAt:    now,
+		ID:              uuid.New().String(),
+		OpportunityID:   opp.ID,
+		BuyExchange:     opp.BuyExchange,
+		SellExchange:    opp.SellExchange,
+		BuyPrice:        vwapBuy,
+		SellPrice:       vwapSell,
+		Volume:          sellFilled,
+		GrossProfit:     decimal.NewFromFloat(grossProfit),
+		Fees:            decimal.Zero,
+		NetProfit:       decimal.NewFromFloat(netProfit),
+		Slippage:        decimal.NewFromFloat(slippage),
+		ExecutedAt:      now,
+		RequestedVolume: requestedVolume,
+		PartialFill:     partialFill,
 	}
 	e.store.SaveTrade(trade)
 

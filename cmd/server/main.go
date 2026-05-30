@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/shopspring/decimal"
 	"github.com/vmnavarro94/coding-challenge-mexico/config"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/depth"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/engine"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/exchange"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/executor"
@@ -135,7 +137,14 @@ func main() {
 
 	// --- Executor ---
 
-	exec := executor.NewExecutor(w, st, agg.Snapshot, clk, cfg.StalenessThreshold)
+	depthCfg := depth.Config{
+		N:         cfg.DepthLevels,
+		StepPct:   cfg.DepthStepPct,
+		MinQtyBTC: cfg.DepthMinQtyBTC,
+		MaxQtyBTC: cfg.DepthMaxQtyBTC,
+		Rand:      rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+	exec := executor.NewExecutor(w, st, agg.Snapshot, clk, cfg.StalenessThreshold, depthCfg)
 
 	// --- WebSocket Hub ---
 

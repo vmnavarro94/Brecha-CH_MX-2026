@@ -2,14 +2,28 @@ package executor
 
 import (
 	"errors"
+	"math/rand"
 	"testing"
 	"time"
 
 	"github.com/shopspring/decimal"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/depth"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/store"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/wallet"
 )
+
+// seededDepthCfg returns a depth.Config with a fixed seed for deterministic tests.
+// N=1, min=max=0.1 → single level, qty always 0.1, vwap == bbo (no multi-level walk).
+func seededDepthCfg(seed int64) depth.Config {
+	return depth.Config{
+		N:         1,
+		StepPct:   0.0001,
+		MinQtyBTC: 0.1,
+		MaxQtyBTC: 0.1,
+		Rand:      rand.New(rand.NewSource(seed)),
+	}
+}
 
 // fixedClock always returns the configured time.
 type fixedClock struct {
@@ -64,7 +78,7 @@ func TestStaleBuyPriceReturnsError(t *testing.T) {
 	opp := makeOpp("binance", "kraken", 50100.0, 50200.0, 0.01)
 	st.Save(*opp)
 
-	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold)
+	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold, seededDepthCfg(1))
 	err := ex.Execute(opp)
 
 	if !errors.Is(err, ErrStalePrice) {
@@ -95,7 +109,7 @@ func TestStaleSellPriceReturnsError(t *testing.T) {
 	opp := makeOpp("binance", "kraken", 50100.0, 50200.0, 0.01)
 	st.Save(*opp)
 
-	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold)
+	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold, seededDepthCfg(1))
 	err := ex.Execute(opp)
 
 	if !errors.Is(err, ErrStalePrice) {
@@ -131,7 +145,7 @@ func TestFreshPricesVolume(t *testing.T) {
 	opp := makeOpp("binance", "kraken", ask, bid, 0.02)
 	st.Save(*opp)
 
-	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold)
+	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold, seededDepthCfg(1))
 	err := ex.Execute(opp)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -170,7 +184,7 @@ func TestZeroVolumeSkipsExecution(t *testing.T) {
 	opp := makeOpp("binance", "kraken", 50000.0, 50300.0, 0.01)
 	st.Save(*opp)
 
-	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold)
+	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold, seededDepthCfg(1))
 	err := ex.Execute(opp)
 
 	if !errors.Is(err, ErrInsufficientBalance) {
@@ -210,7 +224,8 @@ func TestSuccessfulExecutionUpdatesWallets(t *testing.T) {
 	opp := makeOpp("binance", "kraken", ask, bid, maxVol)
 	st.Save(*opp)
 
-	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold)
+	// depth cfg: N=1, qty=0.1 → enough for maxVol=0.01; vwap == bbo
+	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold, seededDepthCfg(1))
 	if err := ex.Execute(opp); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -264,7 +279,7 @@ func TestSuccessfulExecutionSavesTrade(t *testing.T) {
 	opp := makeOpp("binance", "kraken", ask, bid, volume)
 	st.Save(*opp)
 
-	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold)
+	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold, seededDepthCfg(1))
 	if err := ex.Execute(opp); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -278,11 +293,9 @@ func TestSuccessfulExecutionSavesTrade(t *testing.T) {
 	// Gross profit = (bid - ask) * volume
 	grossProfit := (bid - ask) * volume
 	gotNet, _ := trade.NetProfit.Float64()
-	// Net profit ≈ gross (executor uses zero fees for simplicity — fees tracked separately).
 	if gotNet < 0 {
 		t.Errorf("NetProfit should be positive, got %v", gotNet)
 	}
-	// GrossProfit should equal (bid-ask)*volume.
 	gotGross, _ := trade.GrossProfit.Float64()
 	if gotGross != grossProfit {
 		t.Errorf("GrossProfit: got %v, want %v", gotGross, grossProfit)
@@ -311,7 +324,7 @@ func TestSuccessfulExecutionUpdatesOpportunityStatus(t *testing.T) {
 	opp := makeOpp("binance", "kraken", ask, bid, 0.01)
 	st.Save(*opp)
 
-	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold)
+	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold, seededDepthCfg(1))
 	if err := ex.Execute(opp); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -319,5 +332,219 @@ func TestSuccessfulExecutionUpdatesOpportunityStatus(t *testing.T) {
 	saved, _ := st.GetByID("opp-1")
 	if saved.Status != types.StatusExecuted {
 		t.Errorf("opportunity status should be Executed, got %v", saved.Status)
+	}
+}
+
+// TestExecute_BuyPriceIsVWAP asserts Trade.BuyPrice equals the VWAP from the walk.
+// With seededDepthCfg (N=1, qty=0.1, ask=50000), single level covers target → vwap=bboAsk.
+// spec D4
+func TestExecute_BuyPriceIsVWAP(t *testing.T) {
+	now := time.Now()
+	clk := fixedClock{t: now}
+
+	ask := 50000.0
+	bid := 50300.0
+
+	w := wallet.NewMultiWallet(
+		[]string{"binance", "kraken"},
+		map[string]float64{"USDT": 1000.0, "BTC": 1.0},
+	)
+	st := store.NewStore(t.TempDir())
+
+	snapshot := map[string]types.PriceUpdate{
+		"binance": makeUpdate("binance", 49900.0, ask, now),
+		"kraken":  makeUpdate("kraken", bid, 50400.0, now),
+	}
+	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+
+	opp := makeOpp("binance", "kraken", ask, bid, 0.01)
+	st.Save(*opp)
+
+	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold, seededDepthCfg(1))
+	if err := ex.Execute(opp); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	trades := st.AllTrades()
+	if len(trades) != 1 {
+		t.Fatalf("expected 1 trade, got %d", len(trades))
+	}
+	// Single level, full fill → vwap == bboAsk
+	bp, _ := trades[0].BuyPrice.Float64()
+	if bp != ask {
+		t.Errorf("BuyPrice (vwap): got %v, want %v", bp, ask)
+	}
+}
+
+// TestExecute_PartialFillFlag verifies Trade.PartialFill=true + RequestedVolume when
+// available liquidity < requested.
+// spec D5
+func TestExecute_PartialFillFlag(t *testing.T) {
+	now := time.Now()
+	clk := fixedClock{t: now}
+
+	ask := 50000.0
+	bid := 50300.0
+
+	// depth cfg: N=1, qty=0.005 → max available = 0.005 BTC per side
+	// wallet has enough USDT; opp MaxVolume=0.01 → partial fill expected on buy
+	partialCfg := depth.Config{
+		N:         1,
+		StepPct:   0.0001,
+		MinQtyBTC: 0.005,
+		MaxQtyBTC: 0.005,
+		Rand:      rand.New(rand.NewSource(42)),
+	}
+
+	w := wallet.NewMultiWallet(
+		[]string{"binance", "kraken"},
+		map[string]float64{"USDT": 1000.0, "BTC": 1.0},
+	)
+	st := store.NewStore(t.TempDir())
+
+	snapshot := map[string]types.PriceUpdate{
+		"binance": makeUpdate("binance", 49900.0, ask, now),
+		"kraken":  makeUpdate("kraken", bid, 50400.0, now),
+	}
+	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+
+	opp := makeOpp("binance", "kraken", ask, bid, 0.01)
+	st.Save(*opp)
+
+	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold, partialCfg)
+	if err := ex.Execute(opp); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	trades := st.AllTrades()
+	if len(trades) != 1 {
+		t.Fatalf("expected 1 trade, got %d", len(trades))
+	}
+	trade := trades[0]
+	if !trade.PartialFill {
+		t.Errorf("PartialFill: got false, want true")
+	}
+	rv, _ := trade.RequestedVolume.Float64()
+	if rv != 0.01 {
+		t.Errorf("RequestedVolume: got %v, want 0.01", rv)
+	}
+	vol, _ := trade.Volume.Float64()
+	if vol >= 0.01 {
+		t.Errorf("Volume should be less than RequestedVolume, got %v", vol)
+	}
+}
+
+// TestExecute_ReversalUsesVWAPCost asserts that when the sell leg fails, the wallet is
+// credited back the exact VWAP-accumulated buy cost, not bboAsk*volume.
+// spec D7
+func TestExecute_ReversalUsesVWAPCost(t *testing.T) {
+	now := time.Now()
+	clk := fixedClock{t: now}
+
+	ask := 50000.0
+
+	// Single level, qty=0.1, so vwap == ask exactly (no slippage in this config).
+	// sell side: kraken starts with 0 BTC so Debit will fail → reversal triggered.
+	w := wallet.NewMultiWallet(
+		[]string{"binance", "kraken"},
+		map[string]float64{"USDT": 1000.0, "BTC": 0.0}, // kraken has no BTC
+	)
+	// Give binance BTC = 0 so it only has the initial USDT.
+	// We override kraken BTC to 0; binance starts at 0 BTC but gets credited during buy.
+	w2 := wallet.NewMultiWallet(
+		[]string{"binance", "kraken"},
+		map[string]float64{"USDT": 1000.0, "BTC": 0.0},
+	)
+	_ = w
+
+	st := store.NewStore(t.TempDir())
+
+	snapshot := map[string]types.PriceUpdate{
+		"binance": makeUpdate("binance", 49900.0, ask, now),
+		"kraken":  makeUpdate("kraken", 50300.0, 50400.0, now),
+	}
+	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+
+	// MaxVolume=0.01; wallet USDT=1000 → volume = min(0.01, 1000/50000=0.02) = 0.01
+	opp := makeOpp("binance", "kraken", ask, 50300.0, 0.01)
+	st.Save(*opp)
+
+	ex := NewExecutor(w2, st, snapshotFn, clk, stalenessThreshold, seededDepthCfg(1))
+	err := ex.Execute(opp)
+	if !errors.Is(err, ErrInsufficientBalance) {
+		t.Fatalf("expected ErrInsufficientBalance (sell-side reversal), got %v", err)
+	}
+
+	// After reversal: binance USDT should be restored to initial 1000.
+	// cost = vwapBuy * buyFilled = 50000 * 0.01 = 500
+	// initial - cost + credit = 1000 - 500 + 500 = 1000
+	restoredUSDT := w2.Balance("binance", "USDT")
+	if restoredUSDT != 1000.0 {
+		t.Errorf("binance USDT after reversal: got %v, want 1000 (VWAP cost credited back)", restoredUSDT)
+	}
+	// binance BTC should be 0 again (bought then reversed)
+	restoredBTC := w2.Balance("binance", "BTC")
+	if restoredBTC != 0.0 {
+		t.Errorf("binance BTC after reversal: got %v, want 0", restoredBTC)
+	}
+}
+
+// TestExecute_AsymmetricFillAborts verifies that when sellFilled < buyFilled,
+// the result is Skipped and no net BTC change remains.
+// design: atomic-or-nothing
+//
+// Seed 0 with [min=0.005, max=0.025]: ask level qty ≈ 0.0239, bid level qty ≈ 0.0099.
+// MaxVolume=0.02 → buyFilled=0.02 (ask covers it), sellFilled≈0.0099 (bid doesn't) → abort.
+func TestExecute_AsymmetricFillAborts(t *testing.T) {
+	now := time.Now()
+	clk := fixedClock{t: now}
+
+	ask := 50000.0
+
+	// seed=0: ask level qty≈0.024 > 0.02 target, bid level qty≈0.0099 < 0.02 target
+	// → buyFilled=0.02 (full), sellFilled≈0.0099 < buyFilled → abort
+	asymCfg := depth.Config{
+		N:         1,
+		StepPct:   0.0001,
+		MinQtyBTC: 0.005,
+		MaxQtyBTC: 0.025,
+		Rand:      rand.New(rand.NewSource(0)),
+	}
+
+	w := wallet.NewMultiWallet(
+		[]string{"binance", "kraken"},
+		map[string]float64{"USDT": 2000.0, "BTC": 1.0},
+	)
+	st := store.NewStore(t.TempDir())
+
+	snapshot := map[string]types.PriceUpdate{
+		"binance": makeUpdate("binance", 49900.0, ask, now),
+		"kraken":  makeUpdate("kraken", 50300.0, 50400.0, now),
+	}
+	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+
+	opp := makeOpp("binance", "kraken", ask, 50300.0, 0.02)
+	st.Save(*opp)
+
+	initialBinanceBTC := w.Balance("binance", "BTC")
+	initialKrakenBTC := w.Balance("kraken", "BTC")
+
+	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold, asymCfg)
+	err := ex.Execute(opp)
+
+	// Asymmetric fill: sell fills less than buy → skipped
+	if !errors.Is(err, ErrInsufficientBalance) {
+		t.Fatalf("expected ErrInsufficientBalance on asymmetric fill, got %v", err)
+	}
+	saved, _ := st.GetByID("opp-1")
+	if saved.Status != types.StatusSkipped {
+		t.Errorf("status: got %v, want Skipped", saved.Status)
+	}
+	// No net BTC change.
+	if w.Balance("binance", "BTC") != initialBinanceBTC {
+		t.Errorf("binance BTC changed after abort: got %v, want %v", w.Balance("binance", "BTC"), initialBinanceBTC)
+	}
+	if w.Balance("kraken", "BTC") != initialKrakenBTC {
+		t.Errorf("kraken BTC changed after abort: got %v, want %v", w.Balance("kraken", "BTC"), initialKrakenBTC)
 	}
 }
