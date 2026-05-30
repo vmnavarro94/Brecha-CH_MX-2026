@@ -1,0 +1,381 @@
+openapi: 3.0.3
+info:
+  title: BTC Arbitrage Bot — REST API
+  version: 1.0.0
+  description: |
+    Real-time Bitcoin arbitrage bot across 10 exchanges. The REST API serves
+    initial state and historical data. Live updates are pushed over the
+    WebSocket at `/ws` (see project README for the event schema).
+
+    All money fields are serialised as decimal strings (e.g. `"73000.50"`).
+    Parse client-side with a decimal library, never `parseFloat` for accounting.
+
+servers:
+  - url: http://localhost:8088
+    description: Local docker compose
+  - url: https://brecha.example.com
+    description: Production deploy
+
+tags:
+  - name: System
+    description: Runtime status, health, configuration
+  - name: Trading
+    description: Opportunities, trades, P&L
+  - name: Statistics
+    description: Spread model, per-pair P&L breakdown
+
+paths:
+  /api/status:
+    get:
+      tags: [System]
+      summary: System-level status
+      responses:
+        '200':
+          description: Current status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  circuit_breaker_state:
+                    type: string
+                    enum: [active, watching, paused]
+                  exchange_count:
+                    type: integer
+                  trade_count:
+                    type: integer
+
+  /api/health:
+    get:
+      tags: [System]
+      summary: Per-exchange connection state
+      responses:
+        '200':
+          description: Health snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exchanges:
+                    type: object
+                    additionalProperties:
+                      $ref: '#/components/schemas/ExchangeHealth'
+        '503':
+          description: Health snapshot not configured
+
+  /api/config:
+    get:
+      tags: [System]
+      summary: Read current live configuration
+      responses:
+        '200':
+          description: Config snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigSnapshot'
+    patch:
+      tags: [System]
+      summary: Update live configuration (demo mode only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfigPatch'
+      responses:
+        '200':
+          description: Updated snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigSnapshot'
+        '400':
+          description: Invalid JSON
+        '405':
+          description: Method not allowed
+
+  /api/trades:
+    get:
+      tags: [Trading]
+      summary: Historical trades (paginated)
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 0
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: Trade list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Trade'
+
+  /api/opportunities:
+    get:
+      tags: [Trading]
+      summary: Detected opportunities, optionally filtered by status
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [detected, executed, skipped, expired]
+      responses:
+        '200':
+          description: Opportunity list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Opportunity'
+
+  /api/pnl:
+    get:
+      tags: [Trading]
+      summary: Aggregate P&L over the session
+      responses:
+        '200':
+          description: P&L summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_pnl:
+                    type: string
+                    description: Decimal string in USDT
+                    example: "1242.99"
+                  trade_count:
+                    type: integer
+                  win_rate:
+                    type: number
+                    format: float
+
+  /api/pnl-by-pair:
+    get:
+      tags: [Statistics]
+      summary: P&L grouped by exchange pair, sorted by total descending
+      responses:
+        '200':
+          description: Per-pair breakdown
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pairs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PairStats'
+
+  /api/spreads:
+    get:
+      tags: [Statistics]
+      summary: Current spread statistics per exchange pair
+      responses:
+        '200':
+          description: Spread model snapshot
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SpreadStats'
+
+components:
+  schemas:
+    ExchangeHealth:
+      type: object
+      properties:
+        last_update_at:
+          type: string
+          format: date-time
+        last_update_age_ms:
+          type: integer
+        fresh:
+          type: boolean
+          description: True if the last update arrived within the last 10 seconds
+        uptime_pct:
+          type: number
+          description: Session uptime fraction in [0, 1]
+
+    FeeInfo:
+      type: object
+      properties:
+        taker_fee:
+          type: number
+          description: Decimal fraction (0.001 = 0.1%)
+        slippage:
+          type: number
+          description: Slippage factor as decimal fraction
+        withdrawal_btc:
+          type: number
+          description: Flat BTC withdrawal cost
+        network_latency_bps:
+          type: number
+          description: Per-leg network-latency basis points (1 bps = 0.01%)
+
+    ConfigSnapshot:
+      type: object
+      properties:
+        demo_mode:
+          type: boolean
+        min_net_profit_pct:
+          type: number
+        max_position_usdt:
+          type: number
+        staleness_threshold_ms:
+          type: integer
+        execution_interval_ms:
+          type: integer
+        circuit_breaker_n:
+          type: integer
+        circuit_breaker_loss_pct:
+          type: number
+        fees:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/FeeInfo'
+
+    ConfigPatch:
+      type: object
+      description: Partial update. Only present fields are applied.
+      properties:
+        demo_mode:
+          type: boolean
+        min_net_profit_pct:
+          type: number
+        max_position_usdt:
+          type: number
+        staleness_threshold_ms:
+          type: integer
+        execution_interval_ms:
+          type: integer
+        circuit_breaker_n:
+          type: integer
+        circuit_breaker_loss_pct:
+          type: number
+        fees:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              taker_fee:
+                type: number
+              slippage:
+                type: number
+              withdrawal_btc:
+                type: number
+              network_latency_bps:
+                type: number
+
+    Opportunity:
+      type: object
+      properties:
+        ID:
+          type: string
+          format: uuid
+        BuyExchange:
+          type: string
+        SellExchange:
+          type: string
+        BuyPrice:
+          type: string
+        SellPrice:
+          type: string
+        NetProfit:
+          type: string
+        NetProfitPct:
+          type: string
+        ZScore:
+          type: string
+        Score:
+          type: string
+        MaxVolume:
+          type: string
+        DetectedAt:
+          type: string
+          format: date-time
+        Status:
+          type: string
+          enum: [detected, executed, skipped, expired]
+
+    Trade:
+      type: object
+      properties:
+        ID:
+          type: string
+          format: uuid
+        OpportunityID:
+          type: string
+        BuyExchange:
+          type: string
+        SellExchange:
+          type: string
+        BuyPrice:
+          type: string
+          description: VWAP across walked levels on the buy leg
+        SellPrice:
+          type: string
+          description: VWAP across walked levels on the sell leg
+        Volume:
+          type: string
+          description: Actual filled BTC volume
+        RequestedVolume:
+          type: string
+          description: Target volume; differs from Volume on partial fills
+        PartialFill:
+          type: boolean
+        GrossProfit:
+          type: string
+        Fees:
+          type: string
+        NetProfit:
+          type: string
+        Slippage:
+          type: string
+        ExecutedAt:
+          type: string
+          format: date-time
+
+    SpreadStats:
+      type: object
+      properties:
+        Pair:
+          type: string
+          description: "buyEx-sellEx"
+        Mean:
+          type: number
+          description: Welford running mean
+        Std:
+          type: number
+          description: Welford standard deviation
+        Samples:
+          type: integer
+
+    PairStats:
+      type: object
+      properties:
+        pair:
+          type: string
+          description: "buyEx->sellEx"
+        total_pnl:
+          type: number
+        trade_count:
+          type: integer
+        win_rate:
+          type: number
+        total_volume:
+          type: number
