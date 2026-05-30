@@ -12,6 +12,14 @@ import (
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
+// ExchangeHealth describes the live connection state of a single exchange.
+type ExchangeHealth struct {
+	LastUpdateAt    string  `json:"last_update_at"`
+	LastUpdateAgeMs int64   `json:"last_update_age_ms"`
+	Fresh           bool    `json:"fresh"`
+	UptimePct       float64 `json:"uptime_pct"`
+}
+
 // FeeInfo holds the active trading costs for a single exchange.
 type FeeInfo struct {
 	TakerFee          float64 `json:"taker_fee"`
@@ -61,20 +69,22 @@ type apiHandler struct {
 	spreadsFn     func() map[string]model.SpreadStats
 	getConfigFn   func() ConfigSnapshot
 	patchConfigFn func(ConfigPatch) ConfigSnapshot
+	healthFn      func() map[string]ExchangeHealth
 	allowedOrigin string
 	exchangeCount int
 	mux           *http.ServeMux
 }
 
 // NewAPIHandler creates an http.Handler that serves all /api/* routes.
-// spreadsFn is called on each /api/spreads request to get current per-pair statistics.
-// getConfigFn and patchConfigFn power the /api/config endpoint.
+// spreadsFn supplies per-pair spread statistics; healthFn supplies per-exchange
+// connection state (nil disables /api/health).
 func NewAPIHandler(
 	st *store.Store,
 	rm *risk.RiskManager,
 	spreadsFn func() map[string]model.SpreadStats,
 	getConfigFn func() ConfigSnapshot,
 	patchConfigFn func(ConfigPatch) ConfigSnapshot,
+	healthFn func() map[string]ExchangeHealth,
 	allowedOrigin string,
 	exchangeCount int,
 ) http.Handler {
@@ -84,6 +94,7 @@ func NewAPIHandler(
 		spreadsFn:     spreadsFn,
 		getConfigFn:   getConfigFn,
 		patchConfigFn: patchConfigFn,
+		healthFn:      healthFn,
 		allowedOrigin: allowedOrigin,
 		exchangeCount: exchangeCount,
 		mux:           http.NewServeMux(),
@@ -94,6 +105,7 @@ func NewAPIHandler(
 	h.mux.HandleFunc("/api/pnl", h.handlePnL)
 	h.mux.HandleFunc("/api/spreads", h.handleSpreads)
 	h.mux.HandleFunc("/api/config", h.handleConfig)
+	h.mux.HandleFunc("/api/health", h.handleHealth)
 	return h
 }
 
@@ -108,6 +120,17 @@ func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v) //nolint:errcheck
+}
+
+// handleHealth returns per-exchange connection state. Returns 503 if healthFn is nil.
+func (h *apiHandler) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if h.healthFn == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "health not configured"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"exchanges": h.healthFn(),
+	})
 }
 
 // handleStatus returns system-level status information.

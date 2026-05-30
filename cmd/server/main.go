@@ -261,9 +261,29 @@ func main() {
 
 	go runProcessingLoop(ctx, cfg, agg, eng, rm, exec, hub, st, spreadModels, intervalCh, uptimeTracker)
 
+	// --- Health snapshot ---
+
+	healthFn := func() map[string]server.ExchangeHealth {
+		out := make(map[string]server.ExchangeHealth, len(exchangeNames))
+		snap := agg.Snapshot()
+		now := time.Now()
+		for _, ex := range exchangeNames {
+			p, ok := snap[ex]
+			h := server.ExchangeHealth{UptimePct: uptimeTracker.UptimePct(ex)}
+			if ok {
+				age := now.Sub(p.ReceivedAt)
+				h.LastUpdateAt = p.ReceivedAt.UTC().Format(time.RFC3339)
+				h.LastUpdateAgeMs = age.Milliseconds()
+				h.Fresh = age < 10*time.Second
+			}
+			out[ex] = h
+		}
+		return out
+	}
+
 	// --- HTTP server ---
 
-	apiHandler := server.NewAPIHandler(st, rm, spreadStatsFn, getConfigFn, patchConfigFn, cfg.AllowedOrigin, len(exchangeNames))
+	apiHandler := server.NewAPIHandler(st, rm, spreadStatsFn, getConfigFn, patchConfigFn, healthFn, cfg.AllowedOrigin, len(exchangeNames))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)

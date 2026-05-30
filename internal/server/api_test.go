@@ -44,6 +44,7 @@ func newAPI(t *testing.T, st *store.Store, rm *risk.RiskManager, spreadsFn func(
 		st, rm, spreadsFn,
 		func() server.ConfigSnapshot { return noop },
 		func(server.ConfigPatch) server.ConfigSnapshot { return noop },
+		nil,
 		"http://localhost:3000", 3,
 	)
 }
@@ -61,6 +62,7 @@ func newAPIWithConfigFn(
 		func() map[string]model.SpreadStats { return nil },
 		getCfg,
 		patchCfg,
+		nil,
 		"http://localhost:3000", 3,
 	)
 }
@@ -269,6 +271,52 @@ func TestAPIStatus_CORSHeader(t *testing.T) {
 	origin := w.Header().Get("Access-Control-Allow-Origin")
 	if origin != "http://localhost:3000" {
 		t.Errorf("expected CORS origin=http://localhost:3000, got %q", origin)
+	}
+}
+
+// --- GET /api/health ---
+
+func TestAPIHealth_PerExchange(t *testing.T) {
+	st, rm := newTestComponents(t)
+
+	healthFn := func() map[string]server.ExchangeHealth {
+		return map[string]server.ExchangeHealth{
+			"binance": {LastUpdateAt: "2026-05-30T12:00:00Z", LastUpdateAgeMs: 120, Fresh: true, UptimePct: 0.99},
+			"kraken":  {LastUpdateAt: "2026-05-30T11:59:50Z", LastUpdateAgeMs: 10000, Fresh: false, UptimePct: 0.85},
+		}
+	}
+
+	noop := server.ConfigSnapshot{}
+	handler := server.NewAPIHandler(
+		st, rm,
+		func() map[string]model.SpreadStats { return nil },
+		func() server.ConfigSnapshot { return noop },
+		func(server.ConfigPatch) server.ConfigSnapshot { return noop },
+		healthFn,
+		"http://localhost:3000", 3,
+	)
+
+	resp, body := getJSON(t, handler, "/api/health")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	exchanges, ok := body["exchanges"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected exchanges map in response")
+	}
+	bn, ok := exchanges["binance"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected binance in exchanges")
+	}
+	if bn["fresh"] != true {
+		t.Errorf("binance fresh: got %v, want true", bn["fresh"])
+	}
+	if bn["uptime_pct"].(float64) != 0.99 {
+		t.Errorf("binance uptime_pct: got %v, want 0.99", bn["uptime_pct"])
+	}
+	kr := exchanges["kraken"].(map[string]interface{})
+	if kr["fresh"] != false {
+		t.Errorf("kraken fresh: got %v, want false", kr["fresh"])
 	}
 }
 
