@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,9 +15,12 @@ import (
 )
 
 // FeeConfig holds trading costs for a single exchange.
+// WithdrawalBTC is a flat BTC cost amortised per arbitrage trade — accounts for the
+// round-trip rebalancing cost of moving the bought BTC out of the buy exchange.
 type FeeConfig struct {
-	TakerFee      float64
+	TakerFee       float64
 	SlippageFactor float64
+	WithdrawalBTC  float64
 }
 
 // Config holds the engine configuration parameters.
@@ -71,6 +75,7 @@ type Engine struct {
 	cfg        Config
 	pq         oppHeap
 	latency    *LatencyTracker
+	processed  atomic.Uint64
 }
 
 // NewEngine creates a new Engine. snapshotFn returns the current BBO for all exchanges.
@@ -144,7 +149,10 @@ func (e *Engine) ProcessUpdate(update types.PriceUpdate) {
 		costBuyFee := buyAsk * buyFee.TakerFee
 		costSellFee := sellBid * sellFee.TakerFee
 		costSlippage := buyAsk * buyFee.SlippageFactor
-		netProfit := gross - costBuyFee - costSellFee - costSlippage
+		// Withdrawal cost: BTC must move from buyEx back to sellEx to repeat the cycle.
+		// Modeled as the buyEx withdrawal fee (in BTC) priced at the buy price.
+		costWithdrawal := buyFee.WithdrawalBTC * buyAsk
+		netProfit := gross - costBuyFee - costSellFee - costSlippage - costWithdrawal
 
 		if netProfit <= 0 {
 			continue
@@ -176,6 +184,13 @@ func (e *Engine) ProcessUpdate(update types.PriceUpdate) {
 	}
 
 	e.latency.Record(time.Since(start))
+	e.processed.Add(1)
+}
+
+// ProcessedCount returns the total number of ProcessUpdate calls since startup.
+// Safe for concurrent reads.
+func (e *Engine) ProcessedCount() uint64 {
+	return e.processed.Load()
 }
 
 // DequeueTop returns the highest-score non-expired opportunity, or false if none exists.
@@ -209,7 +224,7 @@ func feeFor(cfg Config, exchange string) FeeConfig {
 	if fee, ok := cfg.Fees[exchange]; ok {
 		return fee
 	}
-	return FeeConfig{TakerFee: 0.001, SlippageFactor: 0.0002}
+	return FeeConfig{TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.0002}
 }
 
 // SetMinNetProfitPct updates the minimum net profit threshold.

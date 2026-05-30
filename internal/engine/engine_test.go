@@ -122,6 +122,53 @@ func TestNetProfitFormula(t *testing.T) {
 	}
 }
 
+// TestNetProfitFormula_WithdrawalCost verifies that the buy exchange's WithdrawalBTC fee,
+// priced at the buy ask, is subtracted from gross to produce net profit.
+func TestNetProfitFormula_WithdrawalCost(t *testing.T) {
+	now := time.Now()
+	clk := fixedClock{t: now}
+
+	ask := 50000.0
+	bid := 50300.0
+	feeA := 0.001
+	feeB := 0.001
+	slippageA := 0.0002
+	withdrawBTC := 0.0005
+
+	snapshot := map[string]types.PriceUpdate{
+		"binance": makeUpdate("binance", bid, ask, now),
+		"kraken":  makeUpdate("kraken", bid, 50500.0, now),
+	}
+	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+
+	cfg := Config{
+		Fees: map[string]FeeConfig{
+			"binance": {TakerFee: feeA, SlippageFactor: slippageA, WithdrawalBTC: withdrawBTC},
+			"kraken":  {TakerFee: feeB, SlippageFactor: 0.0003, WithdrawalBTC: 0.0001},
+		},
+		MinNetProfitPct:    0.0,
+		OpportunityTTL:     500 * time.Millisecond,
+		StalenessThreshold: 2 * time.Second,
+	}
+
+	eng := NewEngine(snapshotFn, nil, clk, cfg)
+	eng.ProcessUpdate(makeUpdate("binance", bid, ask, now))
+
+	opp, ok := eng.DequeueTop()
+	if !ok {
+		t.Fatal("expected an opportunity")
+	}
+
+	// net = gross - ask*feeA - bid*feeB - ask*slippageA - withdrawBTC*ask
+	// net = 300 - 50 - 50.3 - 10 - 25 = 164.7
+	wantNet := bid - ask - ask*feeA - bid*feeB - ask*slippageA - withdrawBTC*ask
+	gotNet, _ := opp.NetProfit.Float64()
+
+	if math.Abs(gotNet-wantNet) > 0.01 {
+		t.Errorf("NetProfit (with withdrawal): got %v, want %v", gotNet, wantNet)
+	}
+}
+
 // TestSubThresholdSpreadDiscarded verifies that an opportunity with non-positive net profit
 // is not enqueued.
 func TestSubThresholdSpreadDiscarded(t *testing.T) {

@@ -107,7 +107,7 @@ func main() {
 
 	engineFees := make(map[string]engine.FeeConfig, len(exchangeFees))
 	for name, f := range exchangeFees {
-		engineFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.SlippageFactor}
+		engineFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.SlippageFactor, WithdrawalBTC: f.WithdrawalBTC}
 	}
 
 	eng := engine.NewEngine(
@@ -207,7 +207,7 @@ func main() {
 			}
 			newFees := make(map[string]engine.FeeConfig, len(srcFees))
 			for name, f := range srcFees {
-				newFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.SlippageFactor}
+				newFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.SlippageFactor, WithdrawalBTC: f.WithdrawalBTC}
 			}
 			eng.SetFees(newFees)
 			liveCfg.Fees = toFeeInfoMap(srcFees)
@@ -225,11 +225,14 @@ func main() {
 				if fp.Slippage != nil {
 					cur.Slippage = *fp.Slippage
 				}
+				if fp.WithdrawalBTC != nil {
+					cur.WithdrawalBTC = *fp.WithdrawalBTC
+				}
 				liveCfg.Fees[name] = cur
 			}
 			newFees := make(map[string]engine.FeeConfig, len(liveCfg.Fees))
 			for name, f := range liveCfg.Fees {
-				newFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.Slippage}
+				newFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.Slippage, WithdrawalBTC: f.WithdrawalBTC}
 			}
 			eng.SetFees(newFees)
 		}
@@ -297,6 +300,8 @@ func runProcessingLoop(
 	// Publish latency stats to connected clients at 1 Hz.
 	latencyTicker := time.NewTicker(1 * time.Second)
 	defer latencyTicker.Stop()
+	var prevProcessed uint64
+	prevTickAt := time.Now()
 
 	for {
 		select {
@@ -311,8 +316,16 @@ func runProcessingLoop(
 			// message so the hub doesn't collapse them into a single entry.
 			publishPriceSnapshot(hub, agg)
 
-		case <-latencyTicker.C:
-			publishLatencyStats(hub, eng)
+		case now := <-latencyTicker.C:
+			cur := eng.ProcessedCount()
+			elapsed := now.Sub(prevTickAt).Seconds()
+			rate := 0.0
+			if elapsed > 0 {
+				rate = float64(cur-prevProcessed) / elapsed
+			}
+			prevProcessed = cur
+			prevTickAt = now
+			publishLatencyStats(hub, eng, rate)
 
 		case update, ok := <-agg.Updates():
 			if !ok {
@@ -466,14 +479,15 @@ func publishPnL(hub *server.Hub, st *store.Store) {
 	hub.Publish(server.Event{Type: "pnl_update", Data: json.RawMessage(b)})
 }
 
-func publishLatencyStats(hub *server.Hub, eng *engine.Engine) {
+func publishLatencyStats(hub *server.Hub, eng *engine.Engine, updatesPerSec float64) {
 	p50us, p99us, samples := eng.LatencyStats()
 	hub.Publish(server.Event{
 		Type: "latency_stats",
 		Data: map[string]interface{}{
-			"p50_us":  p50us,
-			"p99_us":  p99us,
-			"samples": samples,
+			"p50_us":          p50us,
+			"p99_us":          p99us,
+			"samples":         samples,
+			"updates_per_sec": updatesPerSec,
 		},
 	})
 }
@@ -482,7 +496,7 @@ func publishLatencyStats(hub *server.Hub, eng *engine.Engine) {
 func toFeeInfoMap(src map[string]exchange.FeeConfig) map[string]server.FeeInfo {
 	out := make(map[string]server.FeeInfo, len(src))
 	for name, f := range src {
-		out[name] = server.FeeInfo{TakerFee: f.TakerFee, Slippage: f.SlippageFactor}
+		out[name] = server.FeeInfo{TakerFee: f.TakerFee, Slippage: f.SlippageFactor, WithdrawalBTC: f.WithdrawalBTC}
 	}
 	return out
 }
