@@ -1,12 +1,10 @@
 package engine
 
 import (
-	"math"
 	"testing"
 	"time"
 
 	"github.com/shopspring/decimal"
-	"github.com/vmnavarro94/coding-challenge-mexico/internal/model"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
@@ -30,452 +28,130 @@ func makeUpdate(exchange string, bid, ask float64, receivedAt time.Time) types.P
 	}
 }
 
-// TestDetectCorrectBuySellPair verifies that given 3 exchanges with known BBO,
-// the engine identifies the correct buy (cheapest ask) and sell (highest bid) pair.
-func TestDetectCorrectBuySellPair(t *testing.T) {
-	now := time.Now()
-	clk := fixedClock{t: now}
+// fakeStrategy is a test double that returns a fixed slice of opportunities per Detect call.
+type fakeStrategy struct {
+	name string
+	opps []types.Opportunity
+}
 
-	snapshot := map[string]types.PriceUpdate{
-		"binance": makeUpdate("binance", 50100.0, 50120.0, now),
-		"kraken":  makeUpdate("kraken", 50150.0, 50180.0, now),
-		"bybit":   makeUpdate("bybit", 50090.0, 50110.0, now),
-	}
-	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+func (f *fakeStrategy) Name() string { return f.name }
+func (f *fakeStrategy) Detect(_ types.PriceUpdate, _ map[string]types.PriceUpdate, _ time.Time) []types.Opportunity {
+	return f.opps
+}
 
-	cfg := Config{
-		Fees: map[string]FeeConfig{
-			"binance": {TakerFee: 0.0, SlippageFactor: 0.0},
-			"kraken":  {TakerFee: 0.0, SlippageFactor: 0.0},
-			"bybit":   {TakerFee: 0.0, SlippageFactor: 0.0},
-		},
-		MinNetProfitPct:    0.0,
-		OpportunityTTL:     500 * time.Millisecond,
-		StalenessThreshold: 2 * time.Second,
-	}
-
-	eng := NewEngine(snapshotFn, nil, clk, cfg)
-
-	// Update with bybit's ask (lowest ask at 50110), kraken has highest bid at 50150.
-	update := makeUpdate("bybit", 50090.0, 50110.0, now)
-	eng.ProcessUpdate(update)
-
-	opp, ok := eng.DequeueTop()
-	if !ok {
-		t.Fatal("expected an opportunity to be detected")
-	}
-	if opp.BuyExchange != "bybit" {
-		t.Errorf("BuyExchange: got %q, want %q", opp.BuyExchange, "bybit")
-	}
-	if opp.SellExchange != "kraken" {
-		t.Errorf("SellExchange: got %q, want %q", opp.SellExchange, "kraken")
+// makeOpp creates a minimal Opportunity with the given strategy and score.
+func makeOpp(strategy string, score float64) types.Opportunity {
+	return types.Opportunity{
+		ID:          "opp-" + strategy,
+		Strategy:    strategy,
+		Score:       decimal.NewFromFloat(score),
+		DetectedAt:  time.Now(),
+		Status:      types.StatusDetected,
+		BuyExchange: "binance",
 	}
 }
 
-// TestNetProfitFormula verifies net_profit = gross_spread - ask_A*fee_A - bid_B*fee_B - ask_A*slippage_A.
-func TestNetProfitFormula(t *testing.T) {
+// TestEngine_EmptyStrategiesNoOpp verifies that with no registered strategies,
+// ProcessUpdate produces no opportunities.
+func TestEngine_EmptyStrategiesNoOpp(t *testing.T) {
 	now := time.Now()
 	clk := fixedClock{t: now}
 
-	ask := 50000.0
-	bid := 50200.0
-	feeA := 0.001
-	feeB := 0.001
-	slippageA := 0.0002
+	snapshotFn := func() map[string]types.PriceUpdate { return nil }
+	eng := NewEngine(snapshotFn, clk, Config{OpportunityTTL: 500 * time.Millisecond}, nil)
 
-	snapshot := map[string]types.PriceUpdate{
-		"binance": makeUpdate("binance", bid, ask, now),
-		"kraken":  makeUpdate("kraken", bid, 50500.0, now),
-	}
-	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
-
-	cfg := Config{
-		Fees: map[string]FeeConfig{
-			"binance": {TakerFee: feeA, SlippageFactor: slippageA},
-			"kraken":  {TakerFee: feeB, SlippageFactor: 0.0003},
-		},
-		MinNetProfitPct:    0.0,
-		OpportunityTTL:     500 * time.Millisecond,
-		StalenessThreshold: 2 * time.Second,
-	}
-
-	eng := NewEngine(snapshotFn, nil, clk, cfg)
-
-	// Process update for binance (ask=50000), it checks vs kraken (bid=50200).
-	update := makeUpdate("binance", bid, ask, now)
-	eng.ProcessUpdate(update)
-
-	opp, ok := eng.DequeueTop()
-	if !ok {
-		t.Fatal("expected an opportunity")
-	}
-
-	// Expected: gross = bid - ask = 50200 - 50000 = 200
-	// net = gross - ask*feeA - bid*feeB - ask*slippageA
-	// net = 200 - 50000*0.001 - 50200*0.001 - 50000*0.0002
-	// net = 200 - 50 - 50.2 - 10 = 89.8
-	wantNet := bid - ask - ask*feeA - bid*feeB - ask*slippageA
-	gotNet, _ := opp.NetProfit.Float64()
-
-	if math.Abs(gotNet-wantNet) > 0.01 {
-		t.Errorf("NetProfit: got %v, want %v", gotNet, wantNet)
-	}
-}
-
-// TestNetProfitFormula_WithdrawalCost verifies that the buy exchange's WithdrawalBTC fee,
-// priced at the buy ask, is subtracted from gross to produce net profit.
-func TestNetProfitFormula_WithdrawalCost(t *testing.T) {
-	now := time.Now()
-	clk := fixedClock{t: now}
-
-	ask := 50000.0
-	bid := 50300.0
-	feeA := 0.001
-	feeB := 0.001
-	slippageA := 0.0002
-	withdrawBTC := 0.0005
-
-	snapshot := map[string]types.PriceUpdate{
-		"binance": makeUpdate("binance", bid, ask, now),
-		"kraken":  makeUpdate("kraken", bid, 50500.0, now),
-	}
-	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
-
-	cfg := Config{
-		Fees: map[string]FeeConfig{
-			"binance": {TakerFee: feeA, SlippageFactor: slippageA, WithdrawalBTC: withdrawBTC},
-			"kraken":  {TakerFee: feeB, SlippageFactor: 0.0003, WithdrawalBTC: 0.0001},
-		},
-		MinNetProfitPct:    0.0,
-		OpportunityTTL:     500 * time.Millisecond,
-		StalenessThreshold: 2 * time.Second,
-	}
-
-	eng := NewEngine(snapshotFn, nil, clk, cfg)
-	eng.ProcessUpdate(makeUpdate("binance", bid, ask, now))
-
-	opp, ok := eng.DequeueTop()
-	if !ok {
-		t.Fatal("expected an opportunity")
-	}
-
-	// net = gross - ask*feeA - bid*feeB - ask*slippageA - withdrawBTC*ask
-	// net = 300 - 50 - 50.3 - 10 - 25 = 164.7
-	wantNet := bid - ask - ask*feeA - bid*feeB - ask*slippageA - withdrawBTC*ask
-	gotNet, _ := opp.NetProfit.Float64()
-
-	if math.Abs(gotNet-wantNet) > 0.01 {
-		t.Errorf("NetProfit (with withdrawal): got %v, want %v", gotNet, wantNet)
-	}
-}
-
-// TestNetProfitFormula_NetworkLatencyCost verifies that per-exchange network-latency
-// basis-points cost is subtracted from net profit on both buy and sell legs. Models the
-// implicit slippage from price drift during network round-trip.
-func TestNetProfitFormula_NetworkLatencyCost(t *testing.T) {
-	now := time.Now()
-	clk := fixedClock{t: now}
-
-	ask := 50000.0
-	bid := 50400.0
-	feeA := 0.001
-	feeB := 0.001
-	slippageA := 0.0002
-	withdrawA := 0.0
-	netBpsA := 3.0 // 3 bps on buy leg
-	netBpsB := 5.0 // 5 bps on sell leg
-
-	snapshot := map[string]types.PriceUpdate{
-		"binance": makeUpdate("binance", bid, ask, now),
-		"kraken":  makeUpdate("kraken", bid, 50500.0, now),
-	}
-	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
-
-	cfg := Config{
-		Fees: map[string]FeeConfig{
-			"binance": {TakerFee: feeA, SlippageFactor: slippageA, WithdrawalBTC: withdrawA, NetworkLatencyBps: netBpsA},
-			"kraken":  {TakerFee: feeB, SlippageFactor: 0.0003, WithdrawalBTC: 0.0, NetworkLatencyBps: netBpsB},
-		},
-		MinNetProfitPct:    0.0,
-		OpportunityTTL:     500 * time.Millisecond,
-		StalenessThreshold: 2 * time.Second,
-	}
-
-	eng := NewEngine(snapshotFn, nil, clk, cfg)
-	eng.ProcessUpdate(makeUpdate("binance", bid, ask, now))
-
-	opp, ok := eng.DequeueTop()
-	if !ok {
-		t.Fatal("expected an opportunity")
-	}
-
-	// net = gross - ask*feeA - bid*feeB - ask*slippageA
-	//        - ask*netBpsA/10000 - bid*netBpsB/10000
-	wantNet := bid - ask - ask*feeA - bid*feeB - ask*slippageA -
-		ask*netBpsA/10000.0 - bid*netBpsB/10000.0
-	gotNet, _ := opp.NetProfit.Float64()
-
-	if math.Abs(gotNet-wantNet) > 0.01 {
-		t.Errorf("NetProfit (with net-latency bps): got %v, want %v", gotNet, wantNet)
-	}
-}
-
-// TestSubThresholdSpreadDiscarded verifies that an opportunity with non-positive net profit
-// is not enqueued.
-func TestSubThresholdSpreadDiscarded(t *testing.T) {
-	now := time.Now()
-	clk := fixedClock{t: now}
-
-	// ask > bid → negative gross spread → discarded
-	snapshot := map[string]types.PriceUpdate{
-		"binance": makeUpdate("binance", 50000.0, 50500.0, now),
-		"kraken":  makeUpdate("kraken", 50000.0, 50600.0, now),
-	}
-	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
-
-	cfg := Config{
-		Fees: map[string]FeeConfig{
-			"binance": {TakerFee: 0.001, SlippageFactor: 0.0002},
-			"kraken":  {TakerFee: 0.0026, SlippageFactor: 0.0003},
-		},
-		MinNetProfitPct:    0.0,
-		OpportunityTTL:     500 * time.Millisecond,
-		StalenessThreshold: 2 * time.Second,
-	}
-
-	eng := NewEngine(snapshotFn, nil, clk, cfg)
-
-	// binance ask=50500, kraken bid=50000 → gross = 50000-50500 = -500 → discarded
-	update := makeUpdate("binance", 49800.0, 50500.0, now)
-	eng.ProcessUpdate(update)
+	eng.ProcessUpdate(makeUpdate("binance", 50100.0, 50000.0, now))
 
 	_, ok := eng.DequeueTop()
 	if ok {
-		t.Error("sub-threshold spread should produce no opportunity")
+		t.Error("expected no opportunities with no strategies registered")
 	}
 }
 
-// TestScoreWithModelReady verifies the score formula when the spread model is ready.
-// score = net_pct*0.6 + sigmoid(z)*0.4
-func TestScoreWithModelReady(t *testing.T) {
+// TestEngine_FanOutAcrossStrategies verifies that two registered strategies each
+// contribute opportunities to the heap from a single ProcessUpdate call.
+func TestEngine_FanOutAcrossStrategies(t *testing.T) {
 	now := time.Now()
 	clk := fixedClock{t: now}
 
-	ask := 50000.0
-	bid := 50300.0
+	opp1 := makeOpp("spatial", 0.9)
+	opp2 := makeOpp("triangular", 0.7)
 
-	snapshot := map[string]types.PriceUpdate{
-		"binance": makeUpdate("binance", bid, ask, now),
-		"kraken":  makeUpdate("kraken", bid, 50600.0, now),
-	}
-	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+	s1 := &fakeStrategy{name: "spatial", opps: []types.Opportunity{opp1}}
+	s2 := &fakeStrategy{name: "triangular", opps: []types.Opportunity{opp2}}
 
-	// Create a ready spread model for this pair.
-	sm := model.NewSpreadModel()
-	for i := 0; i < 100; i++ {
-		sm.Update(float64(i) * 0.001) // seed with 100 values so it's ready
-	}
+	snapshotFn := func() map[string]types.PriceUpdate { return nil }
+	eng := NewEngine(snapshotFn, clk, Config{OpportunityTTL: 500 * time.Millisecond}, []StrategyIface{s1, s2})
 
-	cfg := Config{
-		Fees: map[string]FeeConfig{
-			"binance": {TakerFee: 0.001, SlippageFactor: 0.0002},
-			"kraken":  {TakerFee: 0.0026, SlippageFactor: 0.0003},
-		},
-		MinNetProfitPct:    0.0,
-		OpportunityTTL:     500 * time.Millisecond,
-		StalenessThreshold: 2 * time.Second,
-	}
-
-	models := map[string]*model.SpreadModel{
-		"binance-kraken": sm,
-	}
-
-	eng := NewEngine(snapshotFn, models, clk, cfg)
-
-	update := makeUpdate("binance", bid, ask, now)
-	eng.ProcessUpdate(update)
-
-	opp, ok := eng.DequeueTop()
-	if !ok {
-		t.Fatal("expected opportunity")
-	}
-
-	// Score must be a number in a valid range (not NaN/Inf, > 0 for positive net profit).
-	score, _ := opp.Score.Float64()
-	if math.IsNaN(score) || math.IsInf(score, 0) {
-		t.Errorf("Score is non-finite: %v", score)
-	}
-	if score <= 0 {
-		t.Errorf("Score should be positive for profitable opportunity, got %v", score)
-	}
-}
-
-// TestScoreFallbackModelNotReady verifies score = normalized net_pct when model is not ready.
-func TestScoreFallbackModelNotReady(t *testing.T) {
-	now := time.Now()
-	clk := fixedClock{t: now}
-
-	ask := 50000.0
-	bid := 50300.0
-
-	snapshot := map[string]types.PriceUpdate{
-		"binance": makeUpdate("binance", bid, ask, now),
-		"kraken":  makeUpdate("kraken", bid, 50600.0, now),
-	}
-	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
-
-	// Not-ready model: only 50 samples (below MinSamples=100).
-	sm := model.NewSpreadModel()
-	for i := 0; i < 50; i++ {
-		sm.Update(float64(i) * 0.001)
-	}
-
-	cfg := Config{
-		Fees: map[string]FeeConfig{
-			"binance": {TakerFee: 0.001, SlippageFactor: 0.0002},
-			"kraken":  {TakerFee: 0.0026, SlippageFactor: 0.0003},
-		},
-		MinNetProfitPct:    0.0,
-		OpportunityTTL:     500 * time.Millisecond,
-		StalenessThreshold: 2 * time.Second,
-	}
-
-	models := map[string]*model.SpreadModel{"binance-kraken": sm}
-	eng := NewEngine(snapshotFn, models, clk, cfg)
-
-	update := makeUpdate("binance", bid, ask, now)
-	eng.ProcessUpdate(update)
-
-	opp, ok := eng.DequeueTop()
-	if !ok {
-		t.Fatal("expected opportunity")
-	}
-
-	// When model is not ready, ZScore should be zero (not used in scoring).
-	zScore, _ := opp.ZScore.Float64()
-	if zScore != 0.0 {
-		t.Errorf("ZScore should be 0 when model is not ready, got %v", zScore)
-	}
-}
-
-// TestHeapOrdering verifies that DequeueTop returns the highest-score opportunity first.
-func TestHeapOrdering(t *testing.T) {
-	now := time.Now()
-	clk := fixedClock{t: now}
-
-	// We need 3 distinct pairs with very different profit margins.
-	// To get 3 separate pairs detected in one ProcessUpdate call from exchange A,
-	// we need exchanges B, C, D in the snapshot.
-	snapshot := map[string]types.PriceUpdate{
-		"binance": makeUpdate("binance", 50100.0, 50000.0, now), // ask=50000 (our buy)
-		"kraken":  makeUpdate("kraken", 50200.0, 99999.0, now),  // bid=50200 (highest profit)
-		"bybit":   makeUpdate("bybit", 50150.0, 99999.0, now),   // bid=50150 (mid profit)
-	}
-	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
-
-	cfg := Config{
-		Fees: map[string]FeeConfig{
-			"binance": {TakerFee: 0.0, SlippageFactor: 0.0},
-			"kraken":  {TakerFee: 0.0, SlippageFactor: 0.0},
-			"bybit":   {TakerFee: 0.0, SlippageFactor: 0.0},
-		},
-		MinNetProfitPct:    0.0,
-		OpportunityTTL:     500 * time.Millisecond,
-		StalenessThreshold: 2 * time.Second,
-	}
-
-	eng := NewEngine(snapshotFn, nil, clk, cfg)
-
-	// binance ask=50000, kraken bid=50200 → profit=200
-	// binance ask=50000, bybit bid=50150 → profit=150
-	update := makeUpdate("binance", 50100.0, 50000.0, now)
-	eng.ProcessUpdate(update)
+	eng.ProcessUpdate(makeUpdate("binance", 50100.0, 50000.0, now))
 
 	first, ok1 := eng.DequeueTop()
 	second, ok2 := eng.DequeueTop()
-	third, ok3 := eng.DequeueTop()
 
 	if !ok1 || !ok2 {
-		t.Fatalf("expected at least 2 opportunities, got ok1=%v ok2=%v ok3=%v", ok1, ok2, ok3)
+		t.Fatalf("expected 2 opportunities, got ok1=%v ok2=%v", ok1, ok2)
 	}
-
+	// Higher score must come first (max-heap).
 	score1, _ := first.Score.Float64()
 	score2, _ := second.Score.Float64()
 	if score1 < score2 {
 		t.Errorf("heap ordering: first score %v < second score %v (should be descending)", score1, score2)
 	}
-	_ = third
 }
 
-// TestTTLEviction verifies that an opportunity older than OpportunityTTL is discarded on dequeue.
-func TestTTLEviction(t *testing.T) {
-	base := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-
-	// Clock at detection time.
-	clkAtDetection := fixedClock{t: base}
-
-	snapshot := map[string]types.PriceUpdate{
-		"binance": makeUpdate("binance", 50100.0, 50000.0, base),
-		"kraken":  makeUpdate("kraken", 50300.0, 99999.0, base),
-	}
-	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
-
-	cfg := Config{
-		Fees: map[string]FeeConfig{
-			"binance": {TakerFee: 0.0, SlippageFactor: 0.0},
-			"kraken":  {TakerFee: 0.0, SlippageFactor: 0.0},
-		},
-		MinNetProfitPct:    0.0,
-		OpportunityTTL:     500 * time.Millisecond,
-		StalenessThreshold: 2 * time.Second,
-	}
-
-	eng := NewEngine(snapshotFn, nil, clkAtDetection, cfg)
-
-	update := makeUpdate("binance", 50100.0, 50000.0, base)
-	eng.ProcessUpdate(update)
-
-	// Advance clock past TTL before dequeuing.
-	eng.SetClock(fixedClock{t: base.Add(600 * time.Millisecond)})
-
-	_, ok := eng.DequeueTop()
-	if ok {
-		t.Error("opportunity older than TTL should be evicted on dequeue")
-	}
-}
-
-// TestStaleExchangeNoOpportunity verifies that a stale exchange (ReceivedAt > 2s ago)
-// does not produce opportunities.
-func TestStaleExchangeNoOpportunity(t *testing.T) {
+// TestEngine_MultipleOppsFromOneStrategy verifies that all opportunities returned by
+// a single strategy's Detect are added to the heap.
+func TestEngine_MultipleOppsFromOneStrategy(t *testing.T) {
 	now := time.Now()
 	clk := fixedClock{t: now}
 
-	staleTime := now.Add(-3 * time.Second)
-
-	snapshot := map[string]types.PriceUpdate{
-		"binance": makeUpdate("binance", 50100.0, 50000.0, now),
-		"kraken":  makeUpdate("kraken", 50300.0, 99999.0, staleTime), // stale
+	opps := []types.Opportunity{
+		makeOpp("spatial", 0.8),
+		makeOpp("spatial", 0.6),
+		makeOpp("spatial", 0.4),
 	}
-	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+	s := &fakeStrategy{name: "spatial", opps: opps}
 
-	cfg := Config{
-		Fees: map[string]FeeConfig{
-			"binance": {TakerFee: 0.0, SlippageFactor: 0.0},
-			"kraken":  {TakerFee: 0.0, SlippageFactor: 0.0},
-		},
-		MinNetProfitPct:    0.0,
-		OpportunityTTL:     500 * time.Millisecond,
-		StalenessThreshold: 2 * time.Second,
+	snapshotFn := func() map[string]types.PriceUpdate { return nil }
+	eng := NewEngine(snapshotFn, clk, Config{OpportunityTTL: 500 * time.Millisecond}, []StrategyIface{s})
+
+	eng.ProcessUpdate(makeUpdate("binance", 50100.0, 50000.0, now))
+
+	count := 0
+	for {
+		_, ok := eng.DequeueTop()
+		if !ok {
+			break
+		}
+		count++
 	}
+	if count != 3 {
+		t.Errorf("expected 3 opportunities, got %d", count)
+	}
+}
 
-	eng := NewEngine(snapshotFn, nil, clk, cfg)
+// TestEngine_NoOverwriteStrategyField verifies that the engine does NOT stamp
+// opp.Strategy — it is set by the strategy itself and must be preserved.
+func TestEngine_NoOverwriteStrategyField(t *testing.T) {
+	now := time.Now()
+	clk := fixedClock{t: now}
 
-	update := makeUpdate("binance", 50100.0, 50000.0, now)
-	eng.ProcessUpdate(update)
+	opp := makeOpp("spatial", 0.9)
+	opp.Strategy = "spatial" // already stamped by the strategy
 
-	_, ok := eng.DequeueTop()
-	if ok {
-		t.Error("stale exchange should not produce opportunities")
+	s := &fakeStrategy{name: "spatial", opps: []types.Opportunity{opp}}
+
+	snapshotFn := func() map[string]types.PriceUpdate { return nil }
+	eng := NewEngine(snapshotFn, clk, Config{OpportunityTTL: 500 * time.Millisecond}, []StrategyIface{s})
+
+	eng.ProcessUpdate(makeUpdate("binance", 50100.0, 50000.0, now))
+
+	got, ok := eng.DequeueTop()
+	if !ok {
+		t.Fatal("expected opportunity")
+	}
+	if got.Strategy != "spatial" {
+		t.Errorf("opp.Strategy: got %q, want %q — engine must not overwrite strategy stamp", got.Strategy, "spatial")
 	}
 }
 
@@ -484,19 +160,13 @@ func TestStaleExchangeNoOpportunity(t *testing.T) {
 func TestEngine_LatencyStats_AfterUpdates(t *testing.T) {
 	now := time.Now()
 	clk := fixedClock{t: now}
-	snapshot := map[string]types.PriceUpdate{
-		"binance": makeUpdate("binance", 50100.0, 50000.0, now),
+
+	snapshotFn := func() map[string]types.PriceUpdate {
+		return map[string]types.PriceUpdate{
+			"binance": makeUpdate("binance", 50100.0, 50000.0, now),
+		}
 	}
-	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
-	cfg := Config{
-		Fees: map[string]FeeConfig{
-			"binance": {TakerFee: 0.0, SlippageFactor: 0.0},
-		},
-		MinNetProfitPct:    0.0,
-		OpportunityTTL:     500 * time.Millisecond,
-		StalenessThreshold: 2 * time.Second,
-	}
-	eng := NewEngine(snapshotFn, nil, clk, cfg)
+	eng := NewEngine(snapshotFn, clk, Config{OpportunityTTL: 500 * time.Millisecond}, nil)
 	for i := 0; i < 10; i++ {
 		eng.ProcessUpdate(makeUpdate("binance", 50100.0, 50000.0, now))
 	}
@@ -517,19 +187,13 @@ func TestEngine_LatencyStats_AfterUpdates(t *testing.T) {
 func TestEngine_LatencyStats_ColdStart(t *testing.T) {
 	now := time.Now()
 	clk := fixedClock{t: now}
-	snapshot := map[string]types.PriceUpdate{
-		"binance": makeUpdate("binance", 50100.0, 50000.0, now),
+
+	snapshotFn := func() map[string]types.PriceUpdate {
+		return map[string]types.PriceUpdate{
+			"binance": makeUpdate("binance", 50100.0, 50000.0, now),
+		}
 	}
-	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
-	cfg := Config{
-		Fees: map[string]FeeConfig{
-			"binance": {TakerFee: 0.0, SlippageFactor: 0.0},
-		},
-		MinNetProfitPct:    0.0,
-		OpportunityTTL:     500 * time.Millisecond,
-		StalenessThreshold: 2 * time.Second,
-	}
-	eng := NewEngine(snapshotFn, nil, clk, cfg)
+	eng := NewEngine(snapshotFn, clk, Config{OpportunityTTL: 500 * time.Millisecond}, nil)
 	for i := 0; i < 9; i++ {
 		eng.ProcessUpdate(makeUpdate("binance", 50100.0, 50000.0, now))
 	}
@@ -542,5 +206,48 @@ func TestEngine_LatencyStats_ColdStart(t *testing.T) {
 	}
 	if p99us != 0 {
 		t.Errorf("p99us cold-start: got %v, want 0", p99us)
+	}
+}
+
+// TestEngine_DequeueTopRespectsTTL verifies that an opportunity older than TTL
+// is evicted and not returned.
+func TestEngine_DequeueTopRespectsTTL(t *testing.T) {
+	base := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	clkDetection := fixedClock{t: base}
+
+	opp := types.Opportunity{
+		ID:         "opp-ttl",
+		Score:      decimal.NewFromFloat(0.9),
+		DetectedAt: base,
+		Status:     types.StatusDetected,
+	}
+	s := &fakeStrategy{name: "spatial", opps: []types.Opportunity{opp}}
+
+	snapshotFn := func() map[string]types.PriceUpdate { return nil }
+	eng := NewEngine(snapshotFn, clkDetection, Config{OpportunityTTL: 500 * time.Millisecond}, []StrategyIface{s})
+
+	eng.ProcessUpdate(makeUpdate("binance", 50100.0, 50000.0, base))
+
+	// Advance clock past TTL.
+	eng.SetClock(fixedClock{t: base.Add(600 * time.Millisecond)})
+
+	_, ok := eng.DequeueTop()
+	if ok {
+		t.Error("opportunity older than TTL should be evicted on dequeue")
+	}
+}
+
+// TestEngine_ProcessedCount verifies ProcessedCount increments per ProcessUpdate call.
+func TestEngine_ProcessedCount(t *testing.T) {
+	now := time.Now()
+	clk := fixedClock{t: now}
+	snapshotFn := func() map[string]types.PriceUpdate { return nil }
+	eng := NewEngine(snapshotFn, clk, Config{OpportunityTTL: 500 * time.Millisecond}, nil)
+
+	for i := 0; i < 5; i++ {
+		eng.ProcessUpdate(makeUpdate("binance", 50100.0, 50000.0, now))
+	}
+	if got := eng.ProcessedCount(); got != 5 {
+		t.Errorf("ProcessedCount: got %d, want 5", got)
 	}
 }
