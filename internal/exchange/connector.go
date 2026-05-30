@@ -18,41 +18,45 @@ type Connector interface {
 // FeeConfig holds trading costs per exchange.
 // WithdrawalBTC is the flat BTC fee charged to move bought BTC out of the buy
 // exchange — amortised per trade as part of the round-trip cost of rebalancing.
+// NetworkLatencyBps is the basis-points hit per leg modelling price drift during
+// the WS round-trip. Higher for geographically distant or rate-limited venues.
 type FeeConfig struct {
-	TakerFee       float64
-	SlippageFactor float64
-	WithdrawalBTC  float64
+	TakerFee          float64
+	SlippageFactor    float64
+	WithdrawalBTC     float64
+	NetworkLatencyBps float64
 }
 
-// Fees holds standard retail taker + withdrawal fees per exchange.
-// Withdrawal values reflect public BTC withdrawal fees on each platform (Q1 2026).
+// Fees holds standard retail trading + withdrawal + network costs per exchange.
+// Withdrawal values reflect public BTC withdrawal fees (Q1 2026). NetworkLatencyBps
+// is calibrated to typical observed round-trip drift per geo (EU/US/Asia).
 var Fees = map[string]FeeConfig{
-	"binance":   {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00020},
-	"kraken":    {TakerFee: 0.0026, SlippageFactor: 0.0003, WithdrawalBTC: 0.00005},
-	"bybit":     {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00050},
-	"okx":       {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00040},
-	"gate":      {TakerFee: 0.002, SlippageFactor: 0.0003, WithdrawalBTC: 0.00050},
-	"mexc":      {TakerFee: 0.002, SlippageFactor: 0.0003, WithdrawalBTC: 0.00050},
-	"bitget":    {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00030},
-	"htx":       {TakerFee: 0.002, SlippageFactor: 0.0003, WithdrawalBTC: 0.00010},
-	"cryptocom": {TakerFee: 0.0007, SlippageFactor: 0.0002, WithdrawalBTC: 0.00006},
-	"kucoin":    {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00050},
+	"binance":   {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00020, NetworkLatencyBps: 1.0},
+	"kraken":    {TakerFee: 0.0026, SlippageFactor: 0.0003, WithdrawalBTC: 0.00005, NetworkLatencyBps: 2.0},
+	"bybit":     {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00050, NetworkLatencyBps: 2.0},
+	"okx":       {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00040, NetworkLatencyBps: 2.0},
+	"gate":      {TakerFee: 0.002, SlippageFactor: 0.0003, WithdrawalBTC: 0.00050, NetworkLatencyBps: 3.0},
+	"mexc":      {TakerFee: 0.002, SlippageFactor: 0.0003, WithdrawalBTC: 0.00050, NetworkLatencyBps: 3.0},
+	"bitget":    {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00030, NetworkLatencyBps: 2.0},
+	"htx":       {TakerFee: 0.002, SlippageFactor: 0.0003, WithdrawalBTC: 0.00010, NetworkLatencyBps: 3.0},
+	"cryptocom": {TakerFee: 0.0007, SlippageFactor: 0.0002, WithdrawalBTC: 0.00006, NetworkLatencyBps: 2.0},
+	"kucoin":    {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00050, NetworkLatencyBps: 3.0},
 }
 
 // DemoFees uses near-zero fees so any positive cross-exchange spread triggers a trade.
 // Withdrawal cost is set very low so the partial fill / order book logic is still
 // exercised end-to-end without the fee model swallowing every opportunity.
 var DemoFees = map[string]FeeConfig{
-	"binance":   {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001},
-	"kraken":    {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001},
-	"bybit":     {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001},
-	"okx":       {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001},
-	"gate":      {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001},
-	"mexc":      {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001},
-	"bitget":    {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001},
-	"htx":       {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001},
-	"cryptocom": {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001},
-	"kucoin":    {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001},
+	"binance":   {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001, NetworkLatencyBps: 0.0},
+	"kraken":    {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001, NetworkLatencyBps: 0.0},
+	"bybit":     {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001, NetworkLatencyBps: 0.0},
+	"okx":       {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001, NetworkLatencyBps: 0.0},
+	"gate":      {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001, NetworkLatencyBps: 0.0},
+	"mexc":      {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001, NetworkLatencyBps: 0.0},
+	"bitget":    {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001, NetworkLatencyBps: 0.0},
+	"htx":       {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001, NetworkLatencyBps: 0.0},
+	"cryptocom": {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001, NetworkLatencyBps: 0.0},
+	"kucoin":    {TakerFee: 0.00001, SlippageFactor: 0.000001, WithdrawalBTC: 0.0000001, NetworkLatencyBps: 0.0},
 }
 
 func backoff(attempt int) time.Duration {

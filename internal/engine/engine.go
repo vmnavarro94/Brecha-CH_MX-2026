@@ -17,10 +17,13 @@ import (
 // FeeConfig holds trading costs for a single exchange.
 // WithdrawalBTC is a flat BTC cost amortised per arbitrage trade — accounts for the
 // round-trip rebalancing cost of moving the bought BTC out of the buy exchange.
+// NetworkLatencyBps is a per-leg basis-points cost modelling price drift during the
+// network round-trip; e.g. 3 bps = 0.03% of leg notional.
 type FeeConfig struct {
-	TakerFee       float64
-	SlippageFactor float64
-	WithdrawalBTC  float64
+	TakerFee          float64
+	SlippageFactor    float64
+	WithdrawalBTC     float64
+	NetworkLatencyBps float64
 }
 
 // Config holds the engine configuration parameters.
@@ -152,7 +155,11 @@ func (e *Engine) ProcessUpdate(update types.PriceUpdate) {
 		// Withdrawal cost: BTC must move from buyEx back to sellEx to repeat the cycle.
 		// Modeled as the buyEx withdrawal fee (in BTC) priced at the buy price.
 		costWithdrawal := buyFee.WithdrawalBTC * buyAsk
-		netProfit := gross - costBuyFee - costSellFee - costSlippage - costWithdrawal
+		// Network-latency cost: per-leg basis-points hit modelling the implicit
+		// slippage from price drift during the WS network round-trip.
+		costNetLatency := buyAsk*buyFee.NetworkLatencyBps/10000.0 +
+			sellBid*sellFee.NetworkLatencyBps/10000.0
+		netProfit := gross - costBuyFee - costSellFee - costSlippage - costWithdrawal - costNetLatency
 
 		if netProfit <= 0 {
 			continue
@@ -224,7 +231,7 @@ func feeFor(cfg Config, exchange string) FeeConfig {
 	if fee, ok := cfg.Fees[exchange]; ok {
 		return fee
 	}
-	return FeeConfig{TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.0002}
+	return FeeConfig{TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.0002, NetworkLatencyBps: 2.0}
 }
 
 // SetMinNetProfitPct updates the minimum net profit threshold.

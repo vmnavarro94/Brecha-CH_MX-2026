@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 interface FeeInfo {
   taker_fee: number
   slippage: number
+  withdrawal_btc: number
+  network_latency_bps: number
 }
 
 interface Config {
@@ -210,7 +212,7 @@ export default function TweaksPanel() {
                               const v = parseFloat(e.target.value)
                               if (!isNaN(v)) {
                                 const current = cfg.fees?.[name]
-                                if (current) patch({ fees: { [name]: { taker_fee: v, slippage: current.slippage } } })
+                                if (current) patch({ fees: { [name]: { taker_fee: v, slippage: current.slippage, withdrawal_btc: current.withdrawal_btc, network_latency_bps: current.network_latency_bps } } })
                               }
                             }}
                           />
@@ -239,7 +241,7 @@ export default function TweaksPanel() {
                               const v = parseFloat(e.target.value)
                               if (!isNaN(v)) {
                                 const current = cfg.fees?.[name]
-                                if (current) patch({ fees: { [name]: { taker_fee: current.taker_fee, slippage: v } } })
+                                if (current) patch({ fees: { [name]: { taker_fee: current.taker_fee, slippage: v, withdrawal_btc: current.withdrawal_btc, network_latency_bps: current.network_latency_bps } } })
                               }
                             }}
                           />

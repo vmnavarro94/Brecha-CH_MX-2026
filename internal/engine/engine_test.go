@@ -169,6 +169,57 @@ func TestNetProfitFormula_WithdrawalCost(t *testing.T) {
 	}
 }
 
+// TestNetProfitFormula_NetworkLatencyCost verifies that per-exchange network-latency
+// basis-points cost is subtracted from net profit on both buy and sell legs. Models the
+// implicit slippage from price drift during network round-trip.
+func TestNetProfitFormula_NetworkLatencyCost(t *testing.T) {
+	now := time.Now()
+	clk := fixedClock{t: now}
+
+	ask := 50000.0
+	bid := 50400.0
+	feeA := 0.001
+	feeB := 0.001
+	slippageA := 0.0002
+	withdrawA := 0.0
+	netBpsA := 3.0 // 3 bps on buy leg
+	netBpsB := 5.0 // 5 bps on sell leg
+
+	snapshot := map[string]types.PriceUpdate{
+		"binance": makeUpdate("binance", bid, ask, now),
+		"kraken":  makeUpdate("kraken", bid, 50500.0, now),
+	}
+	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+
+	cfg := Config{
+		Fees: map[string]FeeConfig{
+			"binance": {TakerFee: feeA, SlippageFactor: slippageA, WithdrawalBTC: withdrawA, NetworkLatencyBps: netBpsA},
+			"kraken":  {TakerFee: feeB, SlippageFactor: 0.0003, WithdrawalBTC: 0.0, NetworkLatencyBps: netBpsB},
+		},
+		MinNetProfitPct:    0.0,
+		OpportunityTTL:     500 * time.Millisecond,
+		StalenessThreshold: 2 * time.Second,
+	}
+
+	eng := NewEngine(snapshotFn, nil, clk, cfg)
+	eng.ProcessUpdate(makeUpdate("binance", bid, ask, now))
+
+	opp, ok := eng.DequeueTop()
+	if !ok {
+		t.Fatal("expected an opportunity")
+	}
+
+	// net = gross - ask*feeA - bid*feeB - ask*slippageA
+	//        - ask*netBpsA/10000 - bid*netBpsB/10000
+	wantNet := bid - ask - ask*feeA - bid*feeB - ask*slippageA -
+		ask*netBpsA/10000.0 - bid*netBpsB/10000.0
+	gotNet, _ := opp.NetProfit.Float64()
+
+	if math.Abs(gotNet-wantNet) > 0.01 {
+		t.Errorf("NetProfit (with net-latency bps): got %v, want %v", gotNet, wantNet)
+	}
+}
+
 // TestSubThresholdSpreadDiscarded verifies that an opportunity with non-positive net profit
 // is not enqueued.
 func TestSubThresholdSpreadDiscarded(t *testing.T) {

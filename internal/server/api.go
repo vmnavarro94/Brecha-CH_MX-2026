@@ -12,11 +12,12 @@ import (
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
-// FeeInfo holds the active taker fee, slippage and withdrawal cost for a single exchange.
+// FeeInfo holds the active trading costs for a single exchange.
 type FeeInfo struct {
-	TakerFee       float64 `json:"taker_fee"`
-	Slippage       float64 `json:"slippage"`
-	WithdrawalBTC  float64 `json:"withdrawal_btc"`
+	TakerFee          float64 `json:"taker_fee"`
+	Slippage          float64 `json:"slippage"`
+	WithdrawalBTC     float64 `json:"withdrawal_btc"`
+	NetworkLatencyBps float64 `json:"network_latency_bps"`
 }
 
 // ConfigSnapshot holds the current values for all mutable demo parameters.
@@ -47,9 +48,10 @@ type ConfigPatch struct {
 // FeeInfoPatch carries a partial update for a single exchange's fee config.
 // Only non-nil fields are applied; the others keep their current values.
 type FeeInfoPatch struct {
-	TakerFee      *float64 `json:"taker_fee,omitempty"`
-	Slippage      *float64 `json:"slippage,omitempty"`
-	WithdrawalBTC *float64 `json:"withdrawal_btc,omitempty"`
+	TakerFee          *float64 `json:"taker_fee,omitempty"`
+	Slippage          *float64 `json:"slippage,omitempty"`
+	WithdrawalBTC     *float64 `json:"withdrawal_btc,omitempty"`
+	NetworkLatencyBps *float64 `json:"network_latency_bps,omitempty"`
 }
 
 // apiHandler holds dependencies for the REST API.

@@ -110,7 +110,7 @@ func main() {
 
 	engineFees := make(map[string]engine.FeeConfig, len(exchangeFees))
 	for name, f := range exchangeFees {
-		engineFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.SlippageFactor, WithdrawalBTC: f.WithdrawalBTC}
+		engineFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.SlippageFactor, WithdrawalBTC: f.WithdrawalBTC, NetworkLatencyBps: f.NetworkLatencyBps}
 	}
 
 	eng := engine.NewEngine(
@@ -217,7 +217,7 @@ func main() {
 			}
 			newFees := make(map[string]engine.FeeConfig, len(srcFees))
 			for name, f := range srcFees {
-				newFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.SlippageFactor, WithdrawalBTC: f.WithdrawalBTC}
+				newFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.SlippageFactor, WithdrawalBTC: f.WithdrawalBTC, NetworkLatencyBps: f.NetworkLatencyBps}
 			}
 			eng.SetFees(newFees)
 			liveCfg.Fees = toFeeInfoMap(srcFees)
@@ -238,11 +238,14 @@ func main() {
 				if fp.WithdrawalBTC != nil {
 					cur.WithdrawalBTC = *fp.WithdrawalBTC
 				}
+				if fp.NetworkLatencyBps != nil {
+					cur.NetworkLatencyBps = *fp.NetworkLatencyBps
+				}
 				liveCfg.Fees[name] = cur
 			}
 			newFees := make(map[string]engine.FeeConfig, len(liveCfg.Fees))
 			for name, f := range liveCfg.Fees {
-				newFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.Slippage, WithdrawalBTC: f.WithdrawalBTC}
+				newFees[name] = engine.FeeConfig{TakerFee: f.TakerFee, SlippageFactor: f.Slippage, WithdrawalBTC: f.WithdrawalBTC, NetworkLatencyBps: f.NetworkLatencyBps}
 			}
 			eng.SetFees(newFees)
 		}
@@ -527,7 +530,7 @@ func publishLatencyStats(hub *server.Hub, eng *engine.Engine, updatesPerSec floa
 func toFeeInfoMap(src map[string]exchange.FeeConfig) map[string]server.FeeInfo {
 	out := make(map[string]server.FeeInfo, len(src))
 	for name, f := range src {
-		out[name] = server.FeeInfo{TakerFee: f.TakerFee, Slippage: f.SlippageFactor, WithdrawalBTC: f.WithdrawalBTC}
+		out[name] = server.FeeInfo{TakerFee: f.TakerFee, Slippage: f.SlippageFactor, WithdrawalBTC: f.WithdrawalBTC, NetworkLatencyBps: f.NetworkLatencyBps}
 	}
 	return out
 }
