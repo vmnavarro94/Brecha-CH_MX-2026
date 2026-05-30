@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 
 	"github.com/shopspring/decimal"
@@ -106,6 +107,7 @@ func NewAPIHandler(
 	h.mux.HandleFunc("/api/spreads", h.handleSpreads)
 	h.mux.HandleFunc("/api/config", h.handleConfig)
 	h.mux.HandleFunc("/api/health", h.handleHealth)
+	h.mux.HandleFunc("/api/pnl-by-pair", h.handlePnLByPair)
 	return h
 }
 
@@ -205,6 +207,65 @@ func (h *apiHandler) handlePnL(w http.ResponseWriter, r *http.Request) {
 		TotalPnL:   total,
 		TradeCount: len(trades),
 		WinRate:    winRate,
+	})
+}
+
+// pairStats holds aggregated P&L for one exchange pair.
+type pairStats struct {
+	Pair        string  `json:"pair"`
+	TotalPnL    float64 `json:"total_pnl"`
+	TradeCount  int     `json:"trade_count"`
+	WinRate     float64 `json:"win_rate"`
+	TotalVolume float64 `json:"total_volume"`
+}
+
+// handlePnLByPair groups all trades by (buyEx -> sellEx) and returns the
+// aggregate P&L per pair, sorted by total_pnl descending.
+func (h *apiHandler) handlePnLByPair(w http.ResponseWriter, r *http.Request) {
+	trades := h.store.AllTrades()
+	type agg struct {
+		net    decimal.Decimal
+		vol    decimal.Decimal
+		count  int
+		wins   int
+	}
+	by := make(map[string]*agg)
+	for _, t := range trades {
+		key := string(t.BuyExchange) + "->" + string(t.SellExchange)
+		a, ok := by[key]
+		if !ok {
+			a = &agg{}
+			by[key] = a
+		}
+		a.net = a.net.Add(t.NetProfit)
+		a.vol = a.vol.Add(t.Volume)
+		a.count++
+		if t.NetProfit.IsPositive() {
+			a.wins++
+		}
+	}
+
+	result := make([]pairStats, 0, len(by))
+	for k, a := range by {
+		netF, _ := a.net.Float64()
+		volF, _ := a.vol.Float64()
+		wr := 0.0
+		if a.count > 0 {
+			wr = float64(a.wins) / float64(a.count)
+		}
+		result = append(result, pairStats{
+			Pair:        k,
+			TotalPnL:    netF,
+			TradeCount:  a.count,
+			WinRate:     wr,
+			TotalVolume: volF,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].TotalPnL > result[j].TotalPnL
+	})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"pairs": result,
 	})
 }
 

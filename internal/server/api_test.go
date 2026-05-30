@@ -274,6 +274,64 @@ func TestAPIStatus_CORSHeader(t *testing.T) {
 	}
 }
 
+// --- GET /api/pnl-by-pair ---
+
+func TestAPIPnLByPair_AggregatesByExchangePair(t *testing.T) {
+	st, rm := newTestComponents(t)
+
+	// 3 trades on binance->kraken (one losing), 1 trade on okx->binance.
+	st.SaveTrade(types.Trade{
+		ID: "t1", BuyExchange: "binance", SellExchange: "kraken",
+		NetProfit: decimal.NewFromFloat(5.0), Volume: decimal.NewFromFloat(0.01),
+		ExecutedAt: time.Now(),
+	})
+	st.SaveTrade(types.Trade{
+		ID: "t2", BuyExchange: "binance", SellExchange: "kraken",
+		NetProfit: decimal.NewFromFloat(3.0), Volume: decimal.NewFromFloat(0.01),
+		ExecutedAt: time.Now(),
+	})
+	st.SaveTrade(types.Trade{
+		ID: "t3", BuyExchange: "binance", SellExchange: "kraken",
+		NetProfit: decimal.NewFromFloat(-1.5), Volume: decimal.NewFromFloat(0.01),
+		ExecutedAt: time.Now(),
+	})
+	st.SaveTrade(types.Trade{
+		ID: "t4", BuyExchange: "okx", SellExchange: "binance",
+		NetProfit: decimal.NewFromFloat(2.0), Volume: decimal.NewFromFloat(0.01),
+		ExecutedAt: time.Now(),
+	})
+
+	handler := newAPI(t, st, rm, func() map[string]model.SpreadStats { return nil })
+
+	resp, body := getJSON(t, handler, "/api/pnl-by-pair")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	pairs, ok := body["pairs"].([]interface{})
+	if !ok {
+		t.Fatal("expected pairs array in response")
+	}
+	if len(pairs) != 2 {
+		t.Fatalf("expected 2 distinct pairs, got %d", len(pairs))
+	}
+
+	// Sorted by total_pnl descending — binance->kraken total = 6.5 first.
+	first := pairs[0].(map[string]interface{})
+	if first["pair"] != "binance->kraken" {
+		t.Errorf("first pair: got %v, want binance->kraken", first["pair"])
+	}
+	if first["total_pnl"].(float64) != 6.5 {
+		t.Errorf("binance->kraken total_pnl: got %v, want 6.5", first["total_pnl"])
+	}
+	if first["trade_count"].(float64) != 3 {
+		t.Errorf("binance->kraken trade_count: got %v, want 3", first["trade_count"])
+	}
+	// 2 of 3 winners → 0.6666...
+	if wr := first["win_rate"].(float64); wr < 0.66 || wr > 0.67 {
+		t.Errorf("binance->kraken win_rate: got %v, want ~0.667", wr)
+	}
+}
+
 // --- GET /api/health ---
 
 func TestAPIHealth_PerExchange(t *testing.T) {

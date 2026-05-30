@@ -7,6 +7,11 @@ import SpreadChart from './components/SpreadChart'
 import PnLChart from './components/PnLChart'
 import OpportunityFeed from './components/OpportunityFeed'
 import TradeHistory from './components/TradeHistory'
+import TweaksPanel from './components/TweaksPanel'
+import SpreadHeatmap from './components/SpreadHeatmap'
+import TopOpportunityBanner from './components/TopOpportunityBanner'
+import ReconnectBanner from './components/ReconnectBanner'
+import PerPairPnL from './components/PerPairPnL'
 
 export default function App() {
   useMarketSocket()
@@ -15,15 +20,20 @@ export default function App() {
     <Shell>
       <StatusBar />
       <div className="bx-content">
+        <ReconnectBanner />
+        <TopOpportunityBanner />
         <div className="bx-cockpit">
-          <div className="bx-col">
-            <SpreadChart />
-            <PnLChart />
+          <div className="bx-grid-main">
+            <div className="bx-area bx-area--chart"><SpreadChart /></div>
+            <div className="bx-area bx-area--prices"><PriceTable /></div>
+            <div className="bx-area bx-area--pnl"><PnLChart /></div>
+            <div className="bx-area bx-area--heat"><SpreadHeatmap /></div>
+            <div className="bx-area bx-area--feed"><OpportunityFeed /></div>
           </div>
-          <div className="bx-col">
-            <PriceTable />
-            <OpportunityFeed />
-          </div>
+          <div className="bx-area bx-area--tweaks"><TweaksPanel /></div>
+        </div>
+        <div className="bx-fullrow">
+          <PerPairPnL />
         </div>
         <div className="bx-fullrow">
           <TradeHistory />
