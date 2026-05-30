@@ -23,8 +23,9 @@ const (
 
 // throttledEventTypes is the set of event types that are subject to the 250 ms throttle.
 var throttledEventTypes = map[string]bool{
-	"price_update": true,
-	"spread_stats": true,
+	"price_update":  true,
+	"spread_stats":  true,
+	"latency_stats": true,
 }
 
 // Event is a server-sent message envelope.

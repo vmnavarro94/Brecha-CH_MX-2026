@@ -294,6 +294,10 @@ func runProcessingLoop(
 	snapshotTicker := time.NewTicker(5 * time.Second)
 	defer snapshotTicker.Stop()
 
+	// Publish latency stats to connected clients at 1 Hz.
+	latencyTicker := time.NewTicker(1 * time.Second)
+	defer latencyTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -306,6 +310,9 @@ func runProcessingLoop(
 			// price_snapshot is unthrottled: carries all exchange prices in one
 			// message so the hub doesn't collapse them into a single entry.
 			publishPriceSnapshot(hub, agg)
+
+		case <-latencyTicker.C:
+			publishLatencyStats(hub, eng)
 
 		case update, ok := <-agg.Updates():
 			if !ok {
@@ -457,6 +464,18 @@ func publishPnL(hub *server.Hub, st *store.Store) {
 		"win_rate":    winRate,
 	})
 	hub.Publish(server.Event{Type: "pnl_update", Data: json.RawMessage(b)})
+}
+
+func publishLatencyStats(hub *server.Hub, eng *engine.Engine) {
+	p50us, p99us, samples := eng.LatencyStats()
+	hub.Publish(server.Event{
+		Type: "latency_stats",
+		Data: map[string]interface{}{
+			"p50_us":  p50us,
+			"p99_us":  p99us,
+			"samples": samples,
+		},
+	})
 }
 
 // toFeeInfoMap converts exchange fee configs to the API response shape.
