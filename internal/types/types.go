@@ -53,6 +53,7 @@ type Opportunity struct {
 	MaxVolume    decimal.Decimal
 	DetectedAt   time.Time
 	Status       OpportunityStatus
+	Strategy     string `json:"strategy,omitempty"`
 }
 
 // OrderBookLevel represents a single price level in a synthetic L2 order book.
@@ -76,4 +77,5 @@ type Trade struct {
 	ExecutedAt      time.Time
 	RequestedVolume decimal.Decimal `json:"requested_volume"`
 	PartialFill     bool            `json:"partial_fill"`
+	Strategy        string          `json:"strategy,omitempty"`
 }
