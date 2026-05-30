@@ -48,6 +48,23 @@ type Config struct {
 	DepthStepPct   float64
 	DepthMinQtyBTC float64
 	DepthMaxQtyBTC float64
+
+	// TriangularStrategy parameters.
+	TriangularEnabled      bool
+	TriangularNoiseRange   float64
+	TriangularSeedRefPrice float64
+	TriangularNotional     float64
+	TriangularSeed         int64
+	TriangularTakerFee     float64
+
+	// FundingStrategy parameters.
+	FundingEnabled          bool
+	FundingThreshold        float64
+	FundingPollInterval     time.Duration
+	FundingBaseDifferential float64
+	FundingNotional         float64
+	FundingSeed             int64
+	FundingEmitCooldown     time.Duration
 }
 
 func Load() *Config {
@@ -82,6 +99,23 @@ func Load() *Config {
 		DepthStepPct:   getEnvFloat("DEPTH_STEP_PCT", 0.00005),
 		DepthMinQtyBTC: getEnvFloat("DEPTH_MIN_QTY_BTC", 0.005),
 		DepthMaxQtyBTC: getEnvFloat("DEPTH_MAX_QTY_BTC", 0.025),
+
+		// Triangular strategy — demo defaults tuned to emit within 60s.
+		TriangularEnabled:      getEnvBool("TRIANGULAR_ENABLED", true),
+		TriangularNoiseRange:   getEnvFloat("TRIANGULAR_NOISE_RANGE", 0.005),
+		TriangularSeedRefPrice: getEnvFloat("TRIANGULAR_SEED_REF_PRICE", 2000.0),
+		TriangularNotional:     getEnvFloat("TRIANGULAR_NOTIONAL", 1000.0),
+		TriangularSeed:         int64(getEnvInt("TRIANGULAR_SEED", 42)),
+		TriangularTakerFee:     getEnvFloat("TRIANGULAR_TAKER_FEE", 0.0001),
+
+		// Funding strategy — demo defaults tuned to emit within 60s.
+		FundingEnabled:          getEnvBool("FUNDING_ENABLED", true),
+		FundingThreshold:        getEnvFloat("FUNDING_THRESHOLD", 0.0001),
+		FundingPollInterval:     time.Duration(getEnvInt("FUNDING_POLL_INTERVAL_MS", 30000)) * time.Millisecond,
+		FundingBaseDifferential: getEnvFloat("FUNDING_BASE_DIFFERENTIAL", 0.0003),
+		FundingNotional:         getEnvFloat("FUNDING_NOTIONAL", 1000.0),
+		FundingSeed:             int64(getEnvInt("FUNDING_SEED", 42)),
+		FundingEmitCooldown:     time.Duration(getEnvInt("FUNDING_EMIT_COOLDOWN_MS", 5000)) * time.Millisecond,
 	}
 }
 

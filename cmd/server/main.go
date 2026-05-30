@@ -25,7 +25,9 @@ import (
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/server"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/store"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/strategy"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/strategy/funding"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/strategy/spatial"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/strategy/triangular"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/uptime"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/wallet"
@@ -113,7 +115,53 @@ func main() {
 		StalenessThreshold: cfg.StalenessThreshold,
 	}, spreadModels)
 
+	// --- TriangularStrategy ---
+
+	tri := triangular.New(triangular.Config{
+		TakerFee:     cfg.TriangularTakerFee,
+		NoiseRange:   cfg.TriangularNoiseRange,
+		SeedRefPrice: cfg.TriangularSeedRefPrice,
+		Notional:     cfg.TriangularNotional,
+		MinNetProfit: 0.0,
+		EmitCooldown: 5 * time.Second,
+		Seed:         cfg.TriangularSeed,
+	})
+
+	// --- FundingStrategy ---
+
+	fund := funding.New(funding.Config{
+		Exchanges:        exchangeNames,
+		Threshold:        cfg.FundingThreshold,
+		PollInterval:     cfg.FundingPollInterval,
+		EmitCooldown:     cfg.FundingEmitCooldown,
+		Notional:         cfg.FundingNotional,
+		BaseDifferential: cfg.FundingBaseDifferential,
+		Seed:             cfg.FundingSeed,
+	})
+
+	// --- Starter wiring: call Start(ctx) on any strategy that implements strategy.Starter ---
+
+	allStrategies := []strategy.Strategy{spat, tri, fund}
+	for _, s := range allStrategies {
+		if starter, ok := s.(strategy.Starter); ok {
+			if err := starter.Start(ctx); err != nil {
+				slog.Error("strategy start failed", "strategy", s.Name(), "err", err)
+				os.Exit(1)
+			}
+		}
+	}
+
 	// --- Engine (thin coordinator) ---
+
+	strategyIfaces := make([]engine.StrategyIface, 0, len(allStrategies))
+	if cfg.TriangularEnabled {
+		strategyIfaces = append(strategyIfaces, spat, tri)
+	} else {
+		strategyIfaces = append(strategyIfaces, spat)
+	}
+	if cfg.FundingEnabled {
+		strategyIfaces = append(strategyIfaces, fund)
+	}
 
 	eng := engine.NewEngine(
 		agg.Snapshot,
@@ -121,7 +169,7 @@ func main() {
 		engine.Config{
 			OpportunityTTL: cfg.OpportunityTTL,
 		},
-		[]engine.StrategyIface{spat},
+		strategyIfaces,
 	)
 
 	// Ensure SpatialStrategy satisfies strategy.Strategy at compile time.
@@ -147,6 +195,8 @@ func main() {
 		Rand:      rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	exec := executor.NewExecutor(w, st, agg.Snapshot, clk, cfg.StalenessThreshold, depthCfg)
+	fundingExec := executor.NewFundingExecutor(st, clk)
+	triangularExec := executor.NewTriangularExecutor(st, clk, cfg.TriangularTakerFee, cfg.TriangularNotional)
 
 	// --- WebSocket Hub ---
 
@@ -277,7 +327,7 @@ func main() {
 
 	// --- Processing loop ---
 
-	go runProcessingLoop(ctx, cfg, agg, eng, rm, exec, hub, st, spat, intervalCh, uptimeTracker)
+	go runProcessingLoop(ctx, cfg, agg, eng, rm, exec, fundingExec, triangularExec, hub, st, spat, intervalCh, uptimeTracker)
 
 	// --- Health snapshot ---
 
@@ -339,6 +389,8 @@ func runProcessingLoop(
 	eng *engine.Engine,
 	rm *risk.RiskManager,
 	exec *executor.Executor,
+	fundingExec *executor.FundingExecutor,
+	triangularExec *executor.TriangularExecutor,
 	hub *server.Hub,
 	st *store.Store,
 	spat *spatial.SpatialStrategy,
@@ -425,9 +477,17 @@ func runProcessingLoop(
 				continue
 			}
 
-			err := exec.Execute(opp)
-			if err != nil {
-				slog.Debug("execution failed", "err", err)
+			var execErr error
+			switch opp.Strategy {
+			case "funding":
+				execErr = fundingExec.Execute(opp)
+			case "triangular":
+				execErr = triangularExec.Execute(opp)
+			default:
+				execErr = exec.Execute(opp)
+			}
+			if execErr != nil {
+				slog.Debug("execution failed", "err", execErr)
 				continue
 			}
 
