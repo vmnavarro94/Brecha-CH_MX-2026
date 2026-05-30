@@ -183,6 +183,7 @@ func (e *Executor) Execute(opp *types.Opportunity) error {
 		ExecutedAt:      now,
 		RequestedVolume: requestedVolume,
 		PartialFill:     partialFill,
+		Strategy:        opp.Strategy,
 	}
 	e.store.SaveTrade(trade)
 

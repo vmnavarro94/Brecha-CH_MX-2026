@@ -508,6 +508,45 @@ func TestExecute_ReversalUsesVWAPCost(t *testing.T) {
 	}
 }
 
+// TestExecute_PropagatesStrategy verifies that a trade record carries the same
+// Strategy value as the opportunity that triggered it.
+func TestExecute_PropagatesStrategy(t *testing.T) {
+	now := time.Now()
+	clk := fixedClock{t: now}
+
+	ask := 50000.0
+	bid := 50300.0
+
+	w := wallet.NewMultiWallet(
+		[]string{"binance", "kraken"},
+		map[string]float64{"USDT": 1000.0, "BTC": 1.0},
+	)
+	st := store.NewStore(t.TempDir())
+
+	snapshot := map[string]types.PriceUpdate{
+		"binance": makeUpdate("binance", 49900.0, ask, now),
+		"kraken":  makeUpdate("kraken", bid, 50400.0, now),
+	}
+	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+
+	opp := makeOpp("binance", "kraken", ask, bid, 0.01)
+	opp.Strategy = "spatial"
+	st.Save(*opp)
+
+	ex := NewExecutor(w, st, snapshotFn, clk, stalenessThreshold, seededDepthCfg(1))
+	if err := ex.Execute(opp); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	trades := st.AllTrades()
+	if len(trades) != 1 {
+		t.Fatalf("expected 1 trade, got %d", len(trades))
+	}
+	if trades[0].Strategy != "spatial" {
+		t.Errorf("trade.Strategy: got %q, want %q", trades[0].Strategy, "spatial")
+	}
+}
+
 // TestExecute_AsymmetricFillAborts verifies that when sellFilled < buyFilled,
 // the result is Skipped and no net BTC change remains.
 // design: atomic-or-nothing
