@@ -380,3 +380,69 @@ func TestStaleExchangeNoOpportunity(t *testing.T) {
 		t.Error("stale exchange should not produce opportunities")
 	}
 }
+
+// TestEngine_LatencyStats_AfterUpdates verifies that after 10 ProcessUpdate calls
+// samples == 10 and both percentiles are > 0.
+func TestEngine_LatencyStats_AfterUpdates(t *testing.T) {
+	now := time.Now()
+	clk := fixedClock{t: now}
+	snapshot := map[string]types.PriceUpdate{
+		"binance": makeUpdate("binance", 50100.0, 50000.0, now),
+	}
+	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+	cfg := Config{
+		Fees: map[string]FeeConfig{
+			"binance": {TakerFee: 0.0, SlippageFactor: 0.0},
+		},
+		MinNetProfitPct:    0.0,
+		OpportunityTTL:     500 * time.Millisecond,
+		StalenessThreshold: 2 * time.Second,
+	}
+	eng := NewEngine(snapshotFn, nil, clk, cfg)
+	for i := 0; i < 10; i++ {
+		eng.ProcessUpdate(makeUpdate("binance", 50100.0, 50000.0, now))
+	}
+	p50us, p99us, samples := eng.LatencyStats()
+	if samples != 10 {
+		t.Errorf("samples: got %d, want 10", samples)
+	}
+	if p50us <= 0 {
+		t.Errorf("p50us: got %v, want > 0", p50us)
+	}
+	if p99us <= 0 {
+		t.Errorf("p99us: got %v, want > 0", p99us)
+	}
+}
+
+// TestEngine_LatencyStats_ColdStart verifies that with fewer than 10 samples
+// LatencyStats returns zeros for both percentiles.
+func TestEngine_LatencyStats_ColdStart(t *testing.T) {
+	now := time.Now()
+	clk := fixedClock{t: now}
+	snapshot := map[string]types.PriceUpdate{
+		"binance": makeUpdate("binance", 50100.0, 50000.0, now),
+	}
+	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+	cfg := Config{
+		Fees: map[string]FeeConfig{
+			"binance": {TakerFee: 0.0, SlippageFactor: 0.0},
+		},
+		MinNetProfitPct:    0.0,
+		OpportunityTTL:     500 * time.Millisecond,
+		StalenessThreshold: 2 * time.Second,
+	}
+	eng := NewEngine(snapshotFn, nil, clk, cfg)
+	for i := 0; i < 9; i++ {
+		eng.ProcessUpdate(makeUpdate("binance", 50100.0, 50000.0, now))
+	}
+	p50us, p99us, samples := eng.LatencyStats()
+	if samples != 9 {
+		t.Errorf("samples: got %d, want 9", samples)
+	}
+	if p50us != 0 {
+		t.Errorf("p50us cold-start: got %v, want 0", p50us)
+	}
+	if p99us != 0 {
+		t.Errorf("p99us cold-start: got %v, want 0", p99us)
+	}
+}

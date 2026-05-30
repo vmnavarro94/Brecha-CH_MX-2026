@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,6 +23,7 @@ type FeeConfig struct {
 type Config struct {
 	Fees               map[string]FeeConfig
 	MinNetProfitPct    float64
+	MaxPositionUSDT    float64
 	OpportunityTTL     time.Duration
 	StalenessThreshold time.Duration
 }
@@ -65,8 +67,10 @@ type Engine struct {
 	snapshotFn func() map[string]types.PriceUpdate
 	models     map[string]*model.SpreadModel // pair key "buyEx-sellEx" -> model
 	clock      types.Clock
+	cfgMu      sync.RWMutex
 	cfg        Config
 	pq         oppHeap
+	latency    *LatencyTracker
 }
 
 // NewEngine creates a new Engine. snapshotFn returns the current BBO for all exchanges.
@@ -85,6 +89,7 @@ func NewEngine(
 		clock:      clock,
 		cfg:        cfg,
 		pq:         h,
+		latency:    &LatencyTracker{},
 	}
 }
 
@@ -97,6 +102,12 @@ func (e *Engine) SetClock(clk types.Clock) {
 // all other exchanges in the current snapshot to detect arbitrage opportunities.
 // Complexity: O(N) where N is the number of exchanges in the snapshot.
 func (e *Engine) ProcessUpdate(update types.PriceUpdate) {
+	start := time.Now()
+
+	e.cfgMu.RLock()
+	cfg := e.cfg
+	e.cfgMu.RUnlock()
+
 	snapshot := e.snapshotFn()
 	now := e.clock.Now()
 
@@ -106,20 +117,29 @@ func (e *Engine) ProcessUpdate(update types.PriceUpdate) {
 		}
 		// Skip stale counterparty.
 		age := now.Sub(sellPrice.ReceivedAt)
-		if age > e.cfg.StalenessThreshold {
+		if age > cfg.StalenessThreshold {
 			continue
 		}
 
 		buyAsk, _ := update.Ask.Float64()
 		sellBid, _ := sellPrice.Bid.Float64()
 
+		// Always update the spread model for this pair with the raw cross-exchange
+		// spread (before fees). This gives the model a true distribution of price
+		// differences, including negative ones when the pair is not arbitrageable.
+		if buyAsk > 0 {
+			if sm, ok := e.models[pairKey(update.Exchange, sellEx)]; ok {
+				sm.Update((sellBid - buyAsk) / buyAsk)
+			}
+		}
+
 		gross := sellBid - buyAsk
 		if gross <= 0 {
 			continue
 		}
 
-		buyFee := e.feeFor(update.Exchange)
-		sellFee := e.feeFor(sellEx)
+		buyFee := feeFor(cfg, update.Exchange)
+		sellFee := feeFor(cfg, sellEx)
 
 		costBuyFee := buyAsk * buyFee.TakerFee
 		costSellFee := sellBid * sellFee.TakerFee
@@ -131,7 +151,7 @@ func (e *Engine) ProcessUpdate(update types.PriceUpdate) {
 		}
 
 		netPct := netProfit / buyAsk
-		if netPct < e.cfg.MinNetProfitPct {
+		if netPct < cfg.MinNetProfitPct {
 			continue
 		}
 
@@ -147,23 +167,29 @@ func (e *Engine) ProcessUpdate(update types.PriceUpdate) {
 			NetProfitPct: decimal.NewFromFloat(netPct),
 			ZScore:       decimal.NewFromFloat(zScore),
 			Score:        decimal.NewFromFloat(score),
-			MaxVolume:    decimal.NewFromFloat(1.0),
+			MaxVolume:    decimal.NewFromFloat(cfg.MaxPositionUSDT / buyAsk),
 			DetectedAt:   now,
 			Status:       types.StatusDetected,
 		}
 
 		heap.Push(&e.pq, &scoredOpportunity{opp: opp})
 	}
+
+	e.latency.Record(time.Since(start))
 }
 
 // DequeueTop returns the highest-score non-expired opportunity, or false if none exists.
 // Expired opportunities (older than OpportunityTTL) are silently discarded.
 func (e *Engine) DequeueTop() (*types.Opportunity, bool) {
+	e.cfgMu.RLock()
+	ttl := e.cfg.OpportunityTTL
+	e.cfgMu.RUnlock()
+
 	now := e.clock.Now()
 	for e.pq.Len() > 0 {
 		item := heap.Pop(&e.pq).(*scoredOpportunity)
 		age := now.Sub(item.opp.DetectedAt)
-		if age > e.cfg.OpportunityTTL {
+		if age > ttl {
 			// Expired — discard and try next.
 			continue
 		}
@@ -178,12 +204,50 @@ func pairKey(buyEx, sellEx string) string {
 	return fmt.Sprintf("%s-%s", buyEx, sellEx)
 }
 
-// feeFor returns the FeeConfig for the given exchange, with safe defaults if absent.
-func (e *Engine) feeFor(exchange string) FeeConfig {
-	if fee, ok := e.cfg.Fees[exchange]; ok {
+// feeFor returns the FeeConfig for the given exchange from the provided config snapshot.
+func feeFor(cfg Config, exchange string) FeeConfig {
+	if fee, ok := cfg.Fees[exchange]; ok {
 		return fee
 	}
 	return FeeConfig{TakerFee: 0.001, SlippageFactor: 0.0002}
+}
+
+// SetMinNetProfitPct updates the minimum net profit threshold.
+func (e *Engine) SetMinNetProfitPct(v float64) {
+	e.cfgMu.Lock()
+	e.cfg.MinNetProfitPct = v
+	e.cfgMu.Unlock()
+}
+
+// SetMaxPositionUSDT updates the maximum position size.
+func (e *Engine) SetMaxPositionUSDT(v float64) {
+	e.cfgMu.Lock()
+	e.cfg.MaxPositionUSDT = v
+	e.cfgMu.Unlock()
+}
+
+// SetStalenessThreshold updates the price staleness cutoff.
+func (e *Engine) SetStalenessThreshold(v time.Duration) {
+	e.cfgMu.Lock()
+	e.cfg.StalenessThreshold = v
+	e.cfgMu.Unlock()
+}
+
+// SetFees replaces the fee table atomically. The provided map must be a new allocation.
+func (e *Engine) SetFees(fees map[string]FeeConfig) {
+	e.cfgMu.Lock()
+	e.cfg.Fees = fees
+	e.cfgMu.Unlock()
+}
+
+// LatencyStats returns p50 and p99 in microseconds and the sample count.
+// Returns (0, 0, n) when fewer than 10 samples have been recorded (cold-start guard).
+func (e *Engine) LatencyStats() (p50us, p99us float64, samples int) {
+	p50, p99, n := e.latency.Stats()
+	if n < 10 {
+		return 0, 0, n
+	}
+	return float64(p50.Nanoseconds()) / 1000.0, float64(p99.Nanoseconds()) / 1000.0, n
 }
 
 // computeScore returns (zScore, score).
