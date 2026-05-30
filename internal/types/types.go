@@ -55,17 +55,25 @@ type Opportunity struct {
 	Status       OpportunityStatus
 }
 
+// OrderBookLevel represents a single price level in a synthetic L2 order book.
+type OrderBookLevel struct {
+	Price decimal.Decimal
+	Qty   decimal.Decimal
+}
+
 type Trade struct {
-	ID            string
-	OpportunityID string
-	BuyExchange   string
-	SellExchange  string
-	BuyPrice      decimal.Decimal
-	SellPrice     decimal.Decimal
-	Volume        decimal.Decimal
-	GrossProfit   decimal.Decimal
-	Fees          decimal.Decimal
-	NetProfit     decimal.Decimal
-	Slippage      decimal.Decimal
-	ExecutedAt    time.Time
+	ID              string
+	OpportunityID   string
+	BuyExchange     string
+	SellExchange    string
+	BuyPrice        decimal.Decimal
+	SellPrice       decimal.Decimal
+	Volume          decimal.Decimal
+	GrossProfit     decimal.Decimal
+	Fees            decimal.Decimal
+	NetProfit       decimal.Decimal
+	Slippage        decimal.Decimal
+	ExecutedAt      time.Time
+	RequestedVolume decimal.Decimal `json:"requested_volume"`
+	PartialFill     bool            `json:"partial_fill"`
 }
