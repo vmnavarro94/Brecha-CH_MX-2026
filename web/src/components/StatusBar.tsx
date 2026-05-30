@@ -199,6 +199,7 @@ export default function StatusBar() {
   const tradeCount = useMarketStore((s) => s.trades.length)
   const wsConnected = useMarketStore((s) => s.wsConnected)
   const prices = useMarketStore((s) => s.prices)
+  const latency = useMarketStore((s) => s.latency)
   const execCount = useMarketStore((s) =>
     s.opportunities.filter((o) => o.Status === 'executed').length
   )
@@ -258,6 +259,17 @@ export default function StatusBar() {
           <span style={styles.statKey}>Trades</span>
           <span style={styles.statValue}>{tradeCount}</span>
         </div>
+        {latency.samples >= 10 && (
+          <div style={styles.stat}>
+            <span style={styles.statKey}>Detect µs</span>
+            <span style={styles.statValue}>
+              p50 {latency.p50.toFixed(1)}
+              <small style={{ fontSize: '11px', color: 'var(--fg-3)' }}>
+                {' '}/ p99 {latency.p99.toFixed(1)}
+              </small>
+            </span>
+          </div>
+        )}
       </div>
 
       {/* WS indicator */}
