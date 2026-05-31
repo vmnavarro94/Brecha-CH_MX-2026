@@ -543,14 +543,22 @@ func TestAPIPnLByStrategy_TwoStrategiesSortedDesc(t *testing.T) {
 	}
 }
 
-func TestAPIPnLByStrategy_LegacyEmptyStrategyGroupedAsUnknown(t *testing.T) {
+func TestAPIPnLByStrategy_LegacyEmptyStrategySkipped(t *testing.T) {
 	st, rm := newTestComponents(t)
 
-	// Trade with no strategy set (legacy/empty).
+	// Legacy trade with no strategy set — should be filtered out so the
+	// dashboard does not show a confusing "unknown" bucket.
 	st.SaveTrade(types.Trade{
 		ID:         "old-1",
 		Strategy:   "",
 		NetProfit:  decimal.NewFromFloat(5.0),
+		ExecutedAt: time.Now(),
+	})
+	// A tagged trade so the response is not empty.
+	st.SaveTrade(types.Trade{
+		ID:         "new-1",
+		Strategy:   "spatial",
+		NetProfit:  decimal.NewFromFloat(2.0),
 		ExecutedAt: time.Now(),
 	})
 
@@ -565,11 +573,11 @@ func TestAPIPnLByStrategy_LegacyEmptyStrategyGroupedAsUnknown(t *testing.T) {
 		t.Fatal("expected strategies array in response")
 	}
 	if len(strategies) != 1 {
-		t.Fatalf("expected 1 strategy row, got %d", len(strategies))
+		t.Fatalf("expected 1 strategy row (legacy filtered), got %d", len(strategies))
 	}
 	row := strategies[0].(map[string]interface{})
-	if row["strategy"] != "unknown" {
-		t.Errorf("empty strategy should be bucketed as unknown, got %v", row["strategy"])
+	if row["strategy"] != "spatial" {
+		t.Errorf("expected only spatial row, got %v", row["strategy"])
 	}
 }
 

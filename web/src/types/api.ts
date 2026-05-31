@@ -22,6 +22,7 @@ export interface Opportunity {
   MaxVolume: number
   DetectedAt: string
   Status: OpportunityStatus
+  strategy?: string
   _t: number  // internal timestamp
 }
 

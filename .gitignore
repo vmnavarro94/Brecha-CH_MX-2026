@@ -42,3 +42,8 @@ docs/superpowers/
 
 # Design system scratchpad (Figma export, not part of the runtime)
 Brecha Design System/
+
+# Local node_modules for the screenshot capture script — re-installed on demand
+scripts/node_modules/
+scripts/package.json
+scripts/package-lock.json

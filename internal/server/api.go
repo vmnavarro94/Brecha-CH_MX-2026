@@ -352,8 +352,9 @@ type strategyStats struct {
 }
 
 // handlePnLByStrategy groups all trades by Trade.Strategy and returns aggregate P&L
-// per strategy sorted by total_pnl descending. Trades with Strategy=="" are bucketed
-// as "unknown" for backward-compatibility with legacy records.
+// per strategy sorted by total_pnl descending. Trades with Strategy=="" are
+// legacy records persisted before strategy tagging was introduced and are
+// skipped entirely so they do not pollute the dashboard.
 func (h *apiHandler) handlePnLByStrategy(w http.ResponseWriter, r *http.Request) {
 	trades := h.store.AllTrades()
 	type agg struct {
@@ -364,14 +365,13 @@ func (h *apiHandler) handlePnLByStrategy(w http.ResponseWriter, r *http.Request)
 	}
 	by := make(map[string]*agg)
 	for _, t := range trades {
-		key := t.Strategy
-		if key == "" {
-			key = "unknown"
+		if t.Strategy == "" {
+			continue
 		}
-		a, ok := by[key]
+		a, ok := by[t.Strategy]
 		if !ok {
 			a = &agg{}
-			by[key] = a
+			by[t.Strategy] = a
 		}
 		a.net = a.net.Add(t.NetProfit)
 		a.vol = a.vol.Add(t.Volume)

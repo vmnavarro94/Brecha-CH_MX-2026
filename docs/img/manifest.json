@@ -1,0 +1,23 @@
+{
+  "captured_at": "2026-05-31T04:26:52.446Z",
+  "base_url": "http://localhost:8088",
+  "warm_seconds": 45,
+  "viewport": {
+    "width": 1600,
+    "height": 1100,
+    "deviceScaleFactor": 2
+  },
+  "files": [
+    "00-dashboard-full.png",
+    "01-dashboard-with-picker.png",
+    "statusbar.png",
+    "spread-chart.png",
+    "price-table.png",
+    "pnl-chart.png",
+    "spread-heatmap.png",
+    "opportunity-feed.png",
+    "tweaks-panel.png",
+    "trade-history.png",
+    "pair-picker-open.png"
+  ]
+}

@@ -13,7 +13,6 @@ import TopOpportunityBanner from './components/TopOpportunityBanner'
 import ReconnectBanner from './components/ReconnectBanner'
 import PerPairPnL from './components/PerPairPnL'
 import StrategyPnL from './components/StrategyPnL'
-import BacktestPanel from './components/BacktestPanel'
 
 export default function App() {
   useMarketSocket()
@@ -25,14 +24,12 @@ export default function App() {
         <ReconnectBanner />
         <TopOpportunityBanner />
         <div className="bx-cockpit">
-          <div className="bx-grid-main">
-            <div className="bx-area bx-area--chart"><SpreadChart /></div>
-            <div className="bx-area bx-area--prices"><PriceTable /></div>
-            <div className="bx-area bx-area--pnl"><PnLChart /></div>
-            <div className="bx-area bx-area--heat"><SpreadHeatmap /></div>
-            <div className="bx-area bx-area--feed"><OpportunityFeed /></div>
-          </div>
+          <div className="bx-area bx-area--chart"><SpreadChart /></div>
+          <div className="bx-area bx-area--prices"><PriceTable /></div>
           <div className="bx-area bx-area--tweaks"><TweaksPanel /></div>
+          <div className="bx-area bx-area--pnl"><PnLChart /></div>
+          <div className="bx-area bx-area--heat"><SpreadHeatmap /></div>
+          <div className="bx-area bx-area--feed"><OpportunityFeed /></div>
         </div>
         <div className="bx-fullrow">
           <PerPairPnL />
@@ -42,9 +39,6 @@ export default function App() {
         </div>
         <div className="bx-fullrow">
           <TradeHistory />
-        </div>
-        <div className="bx-fullrow">
-          <BacktestPanel />
         </div>
       </div>
     </Shell>

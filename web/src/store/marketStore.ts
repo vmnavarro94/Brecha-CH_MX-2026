@@ -7,8 +7,9 @@ import type { RawOpportunity, RawTrade, RawPriceUpdate } from '../types/api'
 
 export const EXCHANGES: Exchange[] = ['binance', 'kraken', 'bybit', 'okx', 'gate', 'mexc', 'bitget', 'htx', 'cryptocom', 'kucoin']
 
-// Stable palette keyed by hashed pair name so a pair keeps the same color
-// regardless of where it lands in the featured ranking.
+// Palette assigned greedily to the featured set so no two visible pairs share
+// a color, while each pair stays stably on the same color as long as the
+// featured set composition does not change.
 const PAIR_PALETTE = [
   'var(--orange)',
   'var(--info)',
@@ -28,14 +29,44 @@ function hashPair(s: string): number {
   return h >>> 0
 }
 
-// pairColor returns a deterministic palette color for a given pair name.
-// The second arg is kept for backward compatibility with existing callers but
-// is no longer used — colors are stable per pair.
-export function pairColor(pair: string, _featuredPairs?: string[]): string {
-  return PAIR_PALETTE[hashPair(pair) % PAIR_PALETTE.length]
+// pairColor: greedy collision-free assignment within featuredPairs.
+//
+// Within a featured set, pairs claim their preferred palette index (hash %
+// PAIR_PALETTE.length) in alphabetical order. If a preferred slot is taken,
+// the next free slot is used. Pairs outside the featured set fall back to a
+// pure hash mapping (used for the picker list swatches and other auxiliary
+// renders).
+export function pairColor(pair: string, featuredPairs?: string[]): string {
+  if (!featuredPairs || featuredPairs.length === 0) {
+    return PAIR_PALETTE[hashPair(pair) % PAIR_PALETTE.length]
+  }
+  const idx = assignedColorIndex(pair, featuredPairs)
+  if (idx < 0) {
+    return PAIR_PALETTE[hashPair(pair) % PAIR_PALETTE.length]
+  }
+  return PAIR_PALETTE[idx]
 }
 
-/** @deprecated kept for tests; use pairColor(pair) */
+function assignedColorIndex(pair: string, featuredPairs: string[]): number {
+  // Stable order so the assignment is deterministic regardless of how the
+  // caller arranged featuredPairs at this exact moment.
+  const sorted = [...featuredPairs].sort()
+  const used = new Set<number>()
+  const assignment = new Map<string, number>()
+  for (const p of sorted) {
+    let want = hashPair(p) % PAIR_PALETTE.length
+    let attempts = 0
+    while (used.has(want) && attempts < PAIR_PALETTE.length) {
+      want = (want + 1) % PAIR_PALETTE.length
+      attempts++
+    }
+    used.add(want)
+    assignment.set(p, want)
+  }
+  return assignment.get(pair) ?? -1
+}
+
+/** @deprecated kept for tests; use pairColor(pair, featuredPairs) */
 export const PAIR_COLOR: Record<string, string> = {
   'binance-okx': pairColor('binance-okx'),
   'binance-bybit': pairColor('binance-bybit'),

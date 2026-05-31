@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { Activity, Loader, Settings2, RotateCcw } from 'lucide-react'
 import { useMarketStore, pairColor, MAX_FEATURED } from '../store/marketStore'
 import type { SpreadStats } from '../types/api'
@@ -167,20 +168,28 @@ const panelStyles = {
     gap: '8px',
   } as React.CSSProperties,
 
-  picker: {
-    position: 'absolute' as const,
-    top: '44px',
-    right: '12px',
-    width: '260px',
-    maxHeight: '360px',
-    overflowY: 'auto' as const,
-    padding: '8px',
-    background: 'var(--bg-surface)',
-    border: '1px solid var(--line)',
-    borderRadius: 'var(--r-md)',
-    boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-    zIndex: 10,
+  pickerOverlay: {
+    position: 'fixed' as const,
+    inset: 0,
+    background: 'transparent',
+    zIndex: 1000,
   } as React.CSSProperties,
+
+  picker: (top: number, right: number) =>
+    ({
+      position: 'fixed' as const,
+      top: `${top}px`,
+      right: `${right}px`,
+      width: '280px',
+      maxHeight: '420px',
+      overflowY: 'auto' as const,
+      padding: '8px',
+      background: 'var(--bg-surface)',
+      border: '1px solid var(--line)',
+      borderRadius: 'var(--r-md)',
+      boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+      zIndex: 1001,
+    } as React.CSSProperties),
 
   pickerHead: {
     display: 'flex',
@@ -245,8 +254,21 @@ export default function SpreadChart() {
   const [vis, setVis] = useState<Record<string, boolean>>({})
   const [width, setWidth] = useState(760)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerAnchor, setPickerAnchor] = useState<{ top: number; right: number } | null>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
+  const pickerBtnRef = useRef<HTMLButtonElement>(null)
   const [now, setNow] = useState(Date.now())
+
+  function openPicker() {
+    if (pickerBtnRef.current) {
+      const rect = pickerBtnRef.current.getBoundingClientRect()
+      setPickerAnchor({
+        top: rect.bottom + 6,
+        right: Math.max(8, window.innerWidth - rect.right),
+      })
+    }
+    setPickerOpen(true)
+  }
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 100)
@@ -297,9 +319,12 @@ export default function SpreadChart() {
     }
   }
 
+  // Sort alphabetically by pair name so the picker list does not reshuffle
+  // every time Welford nudges Std on a tick. Std is shown next to each row for
+  // information, but it does not drive the order.
   const pairsSorted = [...spreads]
     .filter((s) => s.Std > 0)
-    .sort((a, b) => b.Std - a.Std)
+    .sort((a, b) => a.Pair.localeCompare(b.Pair))
 
   return (
     <div style={panelStyles.panel} id="bx-zscore">
@@ -310,9 +335,10 @@ export default function SpreadChart() {
         <span style={panelStyles.toolBar}>
           <span style={panelStyles.meta}>(spread − μ) / σ · por par</span>
           <button
+            ref={pickerBtnRef}
             type="button"
             style={panelStyles.toolBtn}
-            onClick={() => setPickerOpen((v) => !v)}
+            onClick={() => (pickerOpen ? setPickerOpen(false) : openPicker())}
             aria-label="Elegir pares"
             data-testid="pair-picker-toggle"
           >
@@ -332,9 +358,17 @@ export default function SpreadChart() {
         </span>
       </div>
 
-      <div style={panelStyles.body} ref={bodyRef}>
-        {pickerOpen && (
-          <div style={panelStyles.picker} data-testid="pair-picker">
+      {pickerOpen && pickerAnchor && createPortal(
+        <>
+          <div
+            style={panelStyles.pickerOverlay}
+            onClick={() => setPickerOpen(false)}
+          />
+          <div
+            style={panelStyles.picker(pickerAnchor.top, pickerAnchor.right)}
+            data-testid="pair-picker"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div style={panelStyles.pickerHead}>
               <span>
                 {selectedPairs !== null ? 'Selección manual' : 'Auto (top por σ)'}
@@ -349,6 +383,12 @@ export default function SpreadChart() {
             {pairsSorted.map((s) => {
               const isOn = featuredPairs.includes(s.Pair)
               const atCap = !isOn && featuredPairs.length >= MAX_FEATURED
+              // Only show real color for pairs already in the featured set; for
+              // candidates outside the set, show a neutral dot so collisions in
+              // the hash preview do not visually duplicate colors.
+              const swatchColor = isOn
+                ? pairColor(s.Pair, featuredPairs)
+                : 'var(--line-strong)'
               return (
                 <div
                   key={s.Pair}
@@ -357,14 +397,18 @@ export default function SpreadChart() {
                   data-testid={`pair-row-${s.Pair}`}
                 >
                   <span style={panelStyles.pickerCheck(isOn)} />
-                  <span style={panelStyles.legSwatch(pairColor(s.Pair))} />
+                  <span style={panelStyles.legSwatch(swatchColor)} />
                   <span>{pairLabel(s.Pair)}</span>
                   <span style={panelStyles.pickerStd}>σ {(s.Std * 1e4).toFixed(2)} bp</span>
                 </div>
               )
             })}
           </div>
-        )}
+        </>,
+        document.body,
+      )}
+
+      <div style={panelStyles.body} ref={bodyRef}>
         {warming.length > 0 && (() => {
           const stat = statFor(warming[0])!
           return (

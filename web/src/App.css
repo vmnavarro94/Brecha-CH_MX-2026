@@ -50,19 +50,12 @@ body {
 
 .bx-cockpit {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 14px;
-  align-items: start;
-}
-
-.bx-grid-main {
-  display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) 300px;
   grid-template-rows: 340px 280px 360px;
   grid-template-areas:
-    "chart  prices"
-    "pnl    prices"
-    "heat   feed";
+    "chart  prices  tweaks"
+    "pnl    prices  tweaks"
+    "heat   feed    feed";
   gap: 14px;
   min-width: 0;
 }
@@ -85,20 +78,18 @@ body {
 .bx-area--prices { grid-area: prices; }
 .bx-area--heat   { grid-area: heat; }
 .bx-area--feed   { grid-area: feed; }
-.bx-area--tweaks { align-self: start; }
+.bx-area--tweaks { grid-area: tweaks; }
 
 /* --- Responsive: stack into single column under 1024px --- */
 @media (max-width: 1023px) {
   .bx-cockpit {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .bx-grid-main {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto auto auto auto;
+    grid-template-rows: auto auto auto auto auto auto;
     grid-template-areas:
       "chart"
       "prices"
       "pnl"
+      "tweaks"
       "heat"
       "feed";
   }
@@ -229,7 +220,16 @@ body {
 .tw-panel {
   display: flex;
   flex-direction: column;
-  height: fit-content;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Scroll the body of the tweaks panel when content exceeds the slot height
+ * (the panel now matches the prices column height inside the cockpit grid). */
+.tw-panel .tw-body {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
 }
 
 .tw-demo-badge {

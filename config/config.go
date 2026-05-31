@@ -108,10 +108,11 @@ func Load() *Config {
 		DepthMinQtyBTC: getEnvFloat("DEPTH_MIN_QTY_BTC", 0.005),
 		DepthMaxQtyBTC: getEnvFloat("DEPTH_MAX_QTY_BTC", 0.025),
 
-		// Triangular strategy — off by default (out-of-spec bonus: 3-leg cycle
-		// USDT→BTC→ETH→USDT introduces ETH and is outside the "BTC arbitrage"
-		// mandate). Opt-in via TRIANGULAR_ENABLED=true.
-		TriangularEnabled:      getEnvBool("TRIANGULAR_ENABLED", false),
+		// Triangular strategy — on by default. The 3-leg cycle USDT→BTC→ETH→USDT
+		// uses ETH as an intermediate leg so the underlying asset is still BTC
+		// but the cycle is broader than pure spatial arb. Opt out with
+		// TRIANGULAR_ENABLED=false if a strict BTC-only run is preferred.
+		TriangularEnabled:      getEnvBool("TRIANGULAR_ENABLED", true),
 		TriangularNoiseRange:   getEnvFloat("TRIANGULAR_NOISE_RANGE", 0.005),
 		TriangularSeedRefPrice: getEnvFloat("TRIANGULAR_SEED_REF_PRICE", 2000.0),
 		TriangularNotional:     getEnvFloat("TRIANGULAR_NOTIONAL", 1000.0),
