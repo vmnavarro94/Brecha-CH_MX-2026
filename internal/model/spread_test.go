@@ -55,25 +55,25 @@ func TestFirstSample(t *testing.T) {
 	}
 }
 
-// TestIsReadyAt99 verifies IsReady is false with 99 samples.
-func TestIsReadyAt99(t *testing.T) {
+// TestIsReadyBelowMinSamples verifies IsReady is false at MinSamples-1.
+func TestIsReadyBelowMinSamples(t *testing.T) {
 	m := NewSpreadModel()
-	for i := 0; i < 99; i++ {
+	for i := 0; i < MinSamples-1; i++ {
 		m.Update(float64(i))
 	}
 	if m.IsReady() {
-		t.Error("IsReady should be false at 99 samples")
+		t.Errorf("IsReady should be false at %d samples", MinSamples-1)
 	}
 }
 
-// TestIsReadyAt100 verifies IsReady is true with exactly 100 samples.
-func TestIsReadyAt100(t *testing.T) {
+// TestIsReadyAtMinSamples verifies IsReady is true at exactly MinSamples.
+func TestIsReadyAtMinSamples(t *testing.T) {
 	m := NewSpreadModel()
-	for i := 0; i < 100; i++ {
+	for i := 0; i < MinSamples; i++ {
 		m.Update(float64(i))
 	}
 	if !m.IsReady() {
-		t.Error("IsReady should be true at 100 samples")
+		t.Errorf("IsReady should be true at %d samples", MinSamples)
 	}
 }
 

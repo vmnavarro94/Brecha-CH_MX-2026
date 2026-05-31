@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/model"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
@@ -58,7 +59,10 @@ type TriangularStrategy struct {
 	last map[string]time.Time
 	// lastRefresh maps exchange → last time refs[exchange] was refreshed.
 	lastRefresh map[string]time.Time
-	rng         *rand.Rand
+	// models maps exchange → SpreadModel trained on the per-tick cycleGain so the
+	// detector can attach a z-score and a normalized score to each opportunity.
+	models map[string]*model.SpreadModel
+	rng    *rand.Rand
 }
 
 // New creates a TriangularStrategy with the given Config.
@@ -69,6 +73,7 @@ func New(cfg Config) *TriangularStrategy {
 		ethBtc:      make(map[string]float64),
 		last:        make(map[string]time.Time),
 		lastRefresh: make(map[string]time.Time),
+		models:      make(map[string]*model.SpreadModel),
 		rng:         rand.New(rand.NewSource(cfg.Seed)),
 	}
 }
@@ -170,6 +175,15 @@ func (t *TriangularStrategy) Detect(
 	netGainPerUSDT := cycleGain - 3*t.cfg.TakerFee
 	netProfit := netGainPerUSDT * t.cfg.Notional
 
+	// Train the per-exchange cycleGain model on every tick — including unprofitable
+	// ones — so the distribution reflects what "normal" looks like for this venue.
+	sm, ok := t.models[exchange]
+	if !ok {
+		sm = model.NewSpreadModel()
+		t.models[exchange] = sm
+	}
+	sm.Update(cycleGain)
+
 	if netProfit <= t.cfg.MinNetProfit {
 		return nil
 	}
@@ -183,12 +197,16 @@ func (t *TriangularStrategy) Detect(
 
 	t.last[exchange] = now
 
+	zScore, score := model.ScoreSignal(sm, cycleGain, netGainPerUSDT)
+
 	opp := types.Opportunity{
 		ID:           uuid.New().String(),
 		BuyExchange:  exchange,
 		SellExchange: exchange,
 		NetProfit:    decimal.NewFromFloat(netProfit),
 		NetProfitPct: decimal.NewFromFloat(cycleGain),
+		ZScore:       decimal.NewFromFloat(zScore),
+		Score:        decimal.NewFromFloat(score),
 		DetectedAt:   now,
 		Status:       types.StatusDetected,
 		Strategy:     "triangular",

@@ -271,7 +271,7 @@ func TestSubThresholdSpreadDiscarded(t *testing.T) {
 }
 
 // TestScoreWithModelReady verifies the score formula when the spread model is ready.
-// score = net_pct*0.6 + sigmoid(z)*0.4
+// score = normNetPct*0.5 + sigmoid(z)*0.5
 func TestScoreWithModelReady(t *testing.T) {
 	now := time.Now()
 
@@ -283,10 +283,9 @@ func TestScoreWithModelReady(t *testing.T) {
 		"kraken":  makeUpdate("kraken", bid, 50600.0, now),
 	}
 
-	// Create a ready spread model for this pair.
 	sm := model.NewSpreadModel()
-	for i := 0; i < 100; i++ {
-		sm.Update(float64(i) * 0.001) // seed with 100 values so it's ready
+	for i := 0; i < model.MinSamples; i++ {
+		sm.Update(float64(i) * 0.001)
 	}
 
 	cfg := spatial.Config{
@@ -344,9 +343,10 @@ func TestScoreFallbackModelNotReady(t *testing.T) {
 		"kraken":  makeUpdate("kraken", bid, 50600.0, now),
 	}
 
-	// Not-ready model: only 50 samples (below MinSamples=100).
+	// Not-ready model: below MinSamples. Detect adds one more sample so we leave
+	// headroom of 2 to stay below the threshold after that update.
 	sm := model.NewSpreadModel()
-	for i := 0; i < 50; i++ {
+	for i := 0; i < model.MinSamples-2; i++ {
 		sm.Update(float64(i) * 0.001)
 	}
 
@@ -423,7 +423,7 @@ func TestScoreBlending(t *testing.T) {
 	}
 
 	sm := model.NewSpreadModel()
-	for i := 0; i < 100; i++ {
+	for i := 0; i < model.MinSamples; i++ {
 		sm.Update(float64(i) * 0.001)
 	}
 
@@ -455,16 +455,21 @@ func TestScoreBlending(t *testing.T) {
 		t.Fatal("expected binance->kraken opportunity")
 	}
 
-	// With a ready model, score must be different from just net_pct.
 	score, _ := opp.Score.Float64()
 	netPct, _ := opp.NetProfitPct.Float64()
-	// score = netPct*0.6 + sigmoid(z)*0.4 — with z≠0 this differs from pure netPct
 	if math.IsNaN(score) {
 		t.Error("Score is NaN")
 	}
-	// Verify the blending formula numerically.
+	// score = normNetPct*0.5 + sigmoid(z)*0.5 with normNetPct = clip(netPct/0.01, 0, 1).
 	z, _ := opp.ZScore.Float64()
-	expectedScore := netPct*0.6 + (1.0/(1.0+math.Exp(-z)))*0.4
+	normNetPct := netPct / 0.01
+	if normNetPct > 1.0 {
+		normNetPct = 1.0
+	}
+	if normNetPct < 0 {
+		normNetPct = 0
+	}
+	expectedScore := normNetPct*0.5 + (1.0/(1.0+math.Exp(-z)))*0.5
 	if math.Abs(score-expectedScore) > 1e-9 {
 		t.Errorf("score blending: got %v, want %v", score, expectedScore)
 	}
@@ -483,7 +488,7 @@ func TestComputeScore_ModelReady(t *testing.T) {
 	}
 
 	sm := model.NewSpreadModel()
-	for i := 0; i < 100; i++ {
+	for i := 0; i < model.MinSamples; i++ {
 		sm.Update(float64(i) * 0.001)
 	}
 
@@ -515,13 +520,20 @@ func TestComputeScore_ModelReady(t *testing.T) {
 	score, _ := opp.Score.Float64()
 	netPct, _ := opp.NetProfitPct.Float64()
 	z, _ := opp.ZScore.Float64()
-	expectedScore := netPct*0.6 + (1.0/(1.0+math.Exp(-z)))*0.4
+	normNetPct := netPct / 0.01
+	if normNetPct > 1.0 {
+		normNetPct = 1.0
+	}
+	if normNetPct < 0 {
+		normNetPct = 0
+	}
+	expectedScore := normNetPct*0.5 + (1.0/(1.0+math.Exp(-z)))*0.5
 	if math.Abs(score-expectedScore) > 1e-9 {
 		t.Errorf("score formula: got %.10f, want %.10f", score, expectedScore)
 	}
 }
 
-// TestComputeScore_ModelNotReady verifies score == netPct when model has < MinSamples.
+// TestComputeScore_ModelNotReady verifies score == normNetPct when model has < MinSamples.
 func TestComputeScore_ModelNotReady(t *testing.T) {
 	now := time.Now()
 	ask := 50000.0
@@ -533,7 +545,7 @@ func TestComputeScore_ModelNotReady(t *testing.T) {
 	}
 
 	sm := model.NewSpreadModel()
-	for i := 0; i < 10; i++ {
+	for i := 0; i < model.MinSamples/3; i++ {
 		sm.Update(float64(i) * 0.001)
 	}
 
@@ -569,9 +581,16 @@ func TestComputeScore_ModelNotReady(t *testing.T) {
 	if z != 0.0 {
 		t.Errorf("ZScore should be 0 when model not ready, got %v", z)
 	}
-	// Fallback: score = netPct (not blended)
-	if math.Abs(score-netPct) > 1e-9 {
-		t.Errorf("fallback score should equal netPct: got %.10f, want %.10f", score, netPct)
+	// Fallback: score = normNetPct (clipped netPct/0.01) — not blended.
+	normNetPct := netPct / 0.01
+	if normNetPct > 1.0 {
+		normNetPct = 1.0
+	}
+	if normNetPct < 0 {
+		normNetPct = 0
+	}
+	if math.Abs(score-normNetPct) > 1e-9 {
+		t.Errorf("fallback score should equal normNetPct: got %.10f, want %.10f", score, normNetPct)
 	}
 }
 
@@ -1238,13 +1257,16 @@ func TestSpatial_ImbalanceAskHeavy_AppliesPenalty(t *testing.T) {
 
 	// ask-heavy: imbalance = (5-20)/(5+20) = -0.6 → max(0, 0.6) = 0.6
 	// penalty = 0.15 * 0.6 = 0.09
-	// But penalty in the formula is applied to the score (netPct), not netProfit directly.
-	// Score = netPct - penalty. But the spec says "penalty subtracted from score before heap push".
-	// The test verifies the score (not net profit) is reduced by exactly 0.09.
+	// With no model, score fallback = normNetPct (clip(netPct/0.01, 0, 1)). Then
+	// the imbalance penalty is subtracted from score.
 	netPct, _ := opp.NetProfitPct.Float64()
 	score, _ := opp.Score.Float64()
 	expectedPenalty := 0.15 * 0.6
-	expectedScore := netPct - expectedPenalty // no model = score = netPct - penalty
+	normNetPct := netPct / 0.01
+	if normNetPct > 1.0 {
+		normNetPct = 1.0
+	}
+	expectedScore := normNetPct - expectedPenalty
 
 	if diff := score - expectedScore; diff < -0.0001 || diff > 0.0001 {
 		t.Errorf("ask-heavy: score got %.6f, want %.6f (penalty=%.4f should be subtracted)", score, expectedScore, expectedPenalty)
@@ -1281,11 +1303,15 @@ func TestSpatial_ImbalanceNilBook_NoPenalty(t *testing.T) {
 		t.Fatal("expected bybit->kraken opportunity (nil book)")
 	}
 
-	// BidSize=0, AskSize=0 → no signal → penalty=0; score = netPct
+	// BidSize=0, AskSize=0 → no signal → penalty=0; score = normNetPct (fallback, no model).
 	netPct, _ := opp.NetProfitPct.Float64()
 	score, _ := opp.Score.Float64()
-	if diff := score - netPct; diff < -0.0001 || diff > 0.0001 {
-		t.Errorf("nil-book: score got %.6f, want %.6f (penalty should be 0 with zero book)", score, netPct)
+	normNetPct := netPct / 0.01
+	if normNetPct > 1.0 {
+		normNetPct = 1.0
+	}
+	if diff := score - normNetPct; diff < -0.0001 || diff > 0.0001 {
+		t.Errorf("nil-book: score got %.6f, want %.6f (penalty should be 0 with zero book)", score, normNetPct)
 	}
 }
 
@@ -1323,10 +1349,14 @@ func TestSpatial_SetImbalancePenaltyWeight_TakesEffect(t *testing.T) {
 		t.Fatal("expected bybit->kraken opportunity after disabling penalty")
 	}
 
-	// With weight=0, penalty=0 for any book → score = netPct
+	// With weight=0, penalty=0 for any book → score = normNetPct (fallback, no model).
 	netPct, _ := opp.NetProfitPct.Float64()
 	score, _ := opp.Score.Float64()
-	if diff := score - netPct; diff < -0.0001 || diff > 0.0001 {
-		t.Errorf("weight=0: score got %.6f, want %.6f (penalty should be disabled)", score, netPct)
+	normNetPct := netPct / 0.01
+	if normNetPct > 1.0 {
+		normNetPct = 1.0
+	}
+	if diff := score - normNetPct; diff < -0.0001 || diff > 0.0001 {
+		t.Errorf("weight=0: score got %.6f, want %.6f (penalty should be disabled)", score, normNetPct)
 	}
 }

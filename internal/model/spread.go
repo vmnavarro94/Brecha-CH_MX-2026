@@ -7,15 +7,15 @@ import (
 
 // SpreadStats holds a snapshot of a spread model's current statistics for a single pair.
 type SpreadStats struct {
-	Pair    string  `json:"pair"`
-	Mean    float64 `json:"mean"`
-	Std     float64 `json:"std"`
-	Samples int     `json:"samples"`
+	Pair    string
+	Mean    float64
+	Std     float64
+	Samples int
 }
 
 const (
 	// MinSamples is the minimum number of samples before the model is considered ready.
-	MinSamples = 100
+	MinSamples = 30
 	// WindowSize is the maximum number of samples kept in the ring buffer.
 	WindowSize = 500
 )
@@ -134,4 +134,35 @@ func (m *SpreadModel) N() int {
 	m.mu_.RLock()
 	defer m.mu_.RUnlock()
 	return m.n
+}
+
+// NetPctScale normalizes a netPct value into [0, 1]: a 1% net return saturates to 1.0.
+const NetPctScale = 0.01
+
+// ScoreSignal returns (zScore, score). It is the shared scoring helper used by all
+// strategies that train a SpreadModel on a raw signal and observe a netPct.
+//
+//	score = normNetPct*0.5 + sigmoid(z)*0.5  when the model is ready
+//	score = normNetPct                       otherwise
+//	normNetPct = clip(netPct/NetPctScale, 0, 1)
+//
+// sm may be nil — in that case the fallback branch is taken.
+func ScoreSignal(sm *SpreadModel, rawSignal, netPct float64) (float64, float64) {
+	normNetPct := netPct / NetPctScale
+	if normNetPct > 1.0 {
+		normNetPct = 1.0
+	}
+	if normNetPct < 0 {
+		normNetPct = 0
+	}
+	if sm == nil || !sm.IsReady() {
+		return 0, normNetPct
+	}
+	z := sm.ZScore(rawSignal)
+	score := normNetPct*0.5 + sigmoidLocal(z)*0.5
+	return z, score
+}
+
+func sigmoidLocal(x float64) float64 {
+	return 1.0 / (1.0 + math.Exp(-x))
 }

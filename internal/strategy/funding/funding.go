@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/model"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
@@ -41,9 +42,12 @@ type FundingStrategy struct {
 	cfg      Config
 	rates    map[string]float64 // exchange → current synthetic funding rate
 	lastEmit map[string]time.Time
-	started  bool
-	rng      *rand.Rand
-	ticks    uint64
+	// models maps "minEx->maxEx" → SpreadModel trained on the per-tick rate differential
+	// so emitted opportunities can carry a meaningful z-score and normalized score.
+	models  map[string]*model.SpreadModel
+	started bool
+	rng     *rand.Rand
+	ticks   uint64
 }
 
 // New creates a FundingStrategy with the given Config.
@@ -52,6 +56,7 @@ func New(cfg Config) *FundingStrategy {
 		cfg:      cfg,
 		rates:    make(map[string]float64),
 		lastEmit: make(map[string]time.Time),
+		models:   make(map[string]*model.SpreadModel),
 		rng:      rand.New(rand.NewSource(cfg.Seed)),
 	}
 }
@@ -141,12 +146,23 @@ func (f *FundingStrategy) Detect(
 	}
 
 	diff := maxRate - minRate
+
+	// Ordered pair key so (bybit,binance) and (binance,bybit) don't produce separate cooldowns.
+	pairKey := minEx + "->" + maxEx
+
+	// Train the per-pair rate-differential model on every tick — including ones below
+	// Threshold — so the distribution reflects the full "normal" range for this pair.
+	sm, ok := f.models[pairKey]
+	if !ok {
+		sm = model.NewSpreadModel()
+		f.models[pairKey] = sm
+	}
+	sm.Update(diff)
+
 	if diff < f.cfg.Threshold {
 		return nil
 	}
 
-	// Ordered pair key so (bybit,binance) and (binance,bybit) don't produce separate cooldowns.
-	pairKey := minEx + "->" + maxEx
 	if last, ok := f.lastEmit[pairKey]; ok {
 		if now.Sub(last) < f.cfg.EmitCooldown {
 			return nil
@@ -156,12 +172,16 @@ func (f *FundingStrategy) Detect(
 	f.lastEmit[pairKey] = now
 
 	netProfit := diff * f.cfg.Notional
+	zScore, score := model.ScoreSignal(sm, diff, diff)
+
 	opp := types.Opportunity{
 		ID:           uuid.New().String(),
 		BuyExchange:  minEx,
 		SellExchange: maxEx,
 		NetProfit:    decimal.NewFromFloat(netProfit),
 		NetProfitPct: decimal.NewFromFloat(diff),
+		ZScore:       decimal.NewFromFloat(zScore),
+		Score:        decimal.NewFromFloat(score),
 		DetectedAt:   now,
 		Status:       types.StatusDetected,
 		Strategy:     "funding",

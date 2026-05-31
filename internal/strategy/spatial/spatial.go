@@ -2,7 +2,6 @@ package spatial
 
 import (
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -119,12 +118,11 @@ func (s *SpatialStrategy) Detect(
 		buyAsk, _ := update.Ask.Float64()
 		sellBid, _ := sellPrice.Bid.Float64()
 
-		// Always update the spread model for this pair with the raw cross-exchange
-		// spread (before fees). This gives the model a true distribution of price
-		// differences, including negative ones when the pair is not arbitrageable.
+		var rawSpread float64
 		if buyAsk > 0 {
+			rawSpread = (sellBid - buyAsk) / buyAsk
 			if sm, ok := s.models[pairKey(update.Exchange, sellEx)]; ok {
-				sm.Update((sellBid - buyAsk) / buyAsk)
+				sm.Update(rawSpread)
 			}
 		}
 
@@ -195,7 +193,7 @@ func (s *SpatialStrategy) Detect(
 		}
 		maxVolume := baseVolume * penalty
 
-		zScore, score := s.computeScore(update.Exchange, sellEx, netPct)
+		zScore, score := s.computeScore(update.Exchange, sellEx, rawSpread, netPct)
 
 		// Imbalance penalty: penalises ask-heavy sell-side books (harder to sell).
 		// penalty = weight * max(0, -imbalance) where imbalance = (bid-ask)/(bid+ask)
@@ -311,29 +309,19 @@ func (s *SpatialStrategy) SetImbalancePenaltyWeight(v float64) {
 	s.cfgMu.Unlock()
 }
 
-// computeScore returns (zScore, score).
-// When the spread model for the pair is ready: score = net_pct*0.6 + sigmoid(z)*0.4
-// Fallback (model absent or not ready): score = net_pct, zScore = 0
-func (s *SpatialStrategy) computeScore(buyEx, sellEx string, netPct float64) (float64, float64) {
+// computeScore is a thin wrapper around model.ScoreSignal that resolves the
+// pair's SpreadModel from s.models. The z-score is computed against the raw
+// cross-exchange spread the model was trained on (not netPct) so train and
+// query distributions stay aligned.
+func (s *SpatialStrategy) computeScore(buyEx, sellEx string, rawSpread, netPct float64) (float64, float64) {
 	if s.models == nil {
-		return 0, netPct
+		return model.ScoreSignal(nil, rawSpread, netPct)
 	}
-	key := pairKey(buyEx, sellEx)
-	sm, ok := s.models[key]
-	if !ok || !sm.IsReady() {
-		return 0, netPct
-	}
-	z := sm.ZScore(netPct)
-	score := netPct*0.6 + sigmoid(z)*0.4
-	return z, score
+	sm := s.models[pairKey(buyEx, sellEx)]
+	return model.ScoreSignal(sm, rawSpread, netPct)
 }
 
 // pairKey returns the canonical key for a buy/sell exchange pair.
 func pairKey(buyEx, sellEx string) string {
 	return fmt.Sprintf("%s-%s", buyEx, sellEx)
-}
-
-// sigmoid maps x to (0, 1). Used to normalize z-score contribution in scoring.
-func sigmoid(x float64) float64 {
-	return 1.0 / (1.0 + math.Exp(-x))
 }
