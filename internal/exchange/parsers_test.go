@@ -70,21 +70,22 @@ func TestBinance_ParseDepth20(t *testing.T) {
 	}
 }
 
-// TestBybitParseMessage verifies the orderbook.1 frame parse.
-func TestBybitParseMessage(t *testing.T) {
+// TestBybit_ParseSnapshot verifies the orderbook.50 snapshot frame parses BBO
+// and emits a BookUpdate with up to 50 levels. Spec: D4.
+func TestBybit_ParseSnapshot(t *testing.T) {
 	by := NewBybit("ws://test", nil)
 	msg := []byte(`{
-		"topic":"orderbook.1.BTCUSDT",
+		"topic":"orderbook.50.BTCUSDT",
 		"type":"snapshot",
 		"data":{
 			"s":"BTCUSDT",
-			"b":[["73010.50","0.5"]],
-			"a":[["73011.00","1.2"]]
+			"b":[["73010.50","0.5"],["73010.00","1.0"]],
+			"a":[["73011.00","1.2"],["73011.50","0.8"]]
 		}
 	}`)
 	pu, ok := by.parseMessage(msg)
 	if !ok {
-		t.Fatal("parseMessage should accept a well-formed bybit frame")
+		t.Fatal("parseMessage should accept a well-formed bybit orderbook.50 snapshot frame")
 	}
 	if pu.Exchange != "bybit" {
 		t.Errorf("Exchange: got %q, want bybit", pu.Exchange)
@@ -97,10 +98,56 @@ func TestBybitParseMessage(t *testing.T) {
 	}
 }
 
+// TestBybit_ParseSnapshot_BookUpdate verifies that a snapshot frame produces a BookUpdate
+// via parseSnapshot with non-empty Bids and Asks. Spec: D4.
+func TestBybit_ParseSnapshot_BookUpdate(t *testing.T) {
+	by := NewBybit("ws://test", nil)
+	msg := []byte(`{
+		"topic":"orderbook.50.BTCUSDT",
+		"type":"snapshot",
+		"data":{
+			"s":"BTCUSDT",
+			"b":[["73010.50","0.5"],["73010.00","1.0"]],
+			"a":[["73011.00","1.2"],["73011.50","0.8"]]
+		}
+	}`)
+	bu, ok := by.parseSnapshot(msg)
+	if !ok {
+		t.Fatal("parseSnapshot should accept a well-formed snapshot frame")
+	}
+	if bu.Exchange != "bybit" {
+		t.Errorf("Exchange: got %q, want bybit", bu.Exchange)
+	}
+	if len(bu.Bids) != 2 {
+		t.Errorf("Bids: got %d levels, want 2", len(bu.Bids))
+	}
+	if len(bu.Asks) != 2 {
+		t.Errorf("Asks: got %d levels, want 2", len(bu.Asks))
+	}
+}
+
+// TestBybit_ParseDelta_Ignored verifies that delta frames do not produce a BookUpdate. Spec: D4.
+func TestBybit_ParseDelta_Ignored(t *testing.T) {
+	by := NewBybit("ws://test", nil)
+	msg := []byte(`{
+		"topic":"orderbook.50.BTCUSDT",
+		"type":"delta",
+		"data":{
+			"s":"BTCUSDT",
+			"b":[["73010.50","0.5"]],
+			"a":[]
+		}
+	}`)
+	_, ok := by.parseSnapshot(msg)
+	if ok {
+		t.Error("parseSnapshot should not emit a BookUpdate for delta frames")
+	}
+}
+
 func TestBybitParseMessage_Empty(t *testing.T) {
 	by := NewBybit("ws://test", nil)
-	if _, ok := by.parseMessage([]byte(`{"topic":"orderbook.1.BTCUSDT","data":{"b":[],"a":[]}}`)); ok {
-		t.Error("parseMessage should reject frame with no bids or asks")
+	if _, ok := by.parseMessage([]byte(`{"topic":"orderbook.50.BTCUSDT","type":"snapshot","data":{"b":[],"a":[]}}`)); ok {
+		t.Error("parseMessage should reject snapshot frame with no bids or asks")
 	}
 }
 

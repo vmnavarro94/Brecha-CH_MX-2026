@@ -15,6 +15,7 @@ import (
 type Bybit struct {
 	wsURL   string
 	ch      chan types.PriceUpdate
+	bookCh  chan BookUpdate
 	logger  *slog.Logger
 	tracker *metrics.LatencyTracker
 }
@@ -23,6 +24,7 @@ func NewBybit(wsURL string, tracker *metrics.LatencyTracker) *Bybit {
 	return &Bybit{
 		wsURL:   wsURL,
 		ch:      make(chan types.PriceUpdate, 512),
+		bookCh:  make(chan BookUpdate, 256),
 		logger:  slog.Default().With("exchange", "bybit"),
 		tracker: tracker,
 	}
@@ -30,6 +32,7 @@ func NewBybit(wsURL string, tracker *metrics.LatencyTracker) *Bybit {
 
 func (b *Bybit) Name() string                       { return "bybit" }
 func (b *Bybit) Updates() <-chan types.PriceUpdate  { return b.ch }
+func (b *Bybit) BookUpdates() <-chan BookUpdate      { return b.bookCh }
 
 func (b *Bybit) Connect(ctx context.Context) error {
 	go b.runWithReconnect(ctx)
@@ -63,9 +66,10 @@ func (b *Bybit) run(ctx context.Context) error {
 	}
 	defer conn.Close()
 
+	// Subscribe to orderbook.50 for L2 snapshots (50 levels per side).
 	sub := map[string]any{
 		"op":   "subscribe",
-		"args": []string{"orderbook.1.BTCUSDT"},
+		"args": []string{"orderbook.50.BTCUSDT"},
 	}
 	if err := conn.WriteJSON(sub); err != nil {
 		return err
@@ -80,7 +84,7 @@ func (b *Bybit) run(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				conn.WriteJSON(map[string]string{"op": "ping"})
+				conn.WriteJSON(map[string]string{"op": "ping"}) //nolint:errcheck
 			}
 		}
 	}()
@@ -99,24 +103,45 @@ func (b *Bybit) run(ctx context.Context) error {
 			return err
 		}
 		t0 := time.Now()
-		pu, ok := b.parseMessage(msg)
-		if !ok {
+
+		// Peek at the type field to dispatch.
+		var peek struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(msg, &peek)
+
+		switch peek.Type {
+		case "snapshot":
+			pu, ok := b.parseMessage(msg)
+			if ok {
+				if b.tracker != nil {
+					b.tracker.Record(time.Since(t0))
+				}
+				select {
+				case b.ch <- pu:
+				default:
+				}
+			}
+			// Also emit a BookUpdate for L2 consumers.
+			if bu, ok := b.parseSnapshot(msg); ok {
+				select {
+				case b.bookCh <- bu:
+				default:
+				}
+			}
+		case "delta":
+			// Delta frames are ignored per design ADR-6.
 			continue
-		}
-		if b.tracker != nil {
-			b.tracker.Record(time.Since(t0))
-		}
-		select {
-		case b.ch <- pu:
-		default:
 		}
 	}
 }
 
-// parseMessage decodes a Bybit orderbook.1.BTCUSDT frame into a PriceUpdate.
+// parseMessage decodes a Bybit orderbook.50.BTCUSDT snapshot frame into a PriceUpdate (BBO).
+// Extracts only the best bid (bids[0]) and best ask (asks[0]).
 func (b *Bybit) parseMessage(msg []byte) (types.PriceUpdate, bool) {
 	var envelope struct {
 		Topic string `json:"topic"`
+		Type  string `json:"type"`
 		Data  struct {
 			Bids [][]string `json:"b"`
 			Asks [][]string `json:"a"`
@@ -125,7 +150,7 @@ func (b *Bybit) parseMessage(msg []byte) (types.PriceUpdate, bool) {
 	if err := json.Unmarshal(msg, &envelope); err != nil {
 		return types.PriceUpdate{}, false
 	}
-	if envelope.Topic != "orderbook.1.BTCUSDT" {
+	if envelope.Topic != "orderbook.50.BTCUSDT" {
 		return types.PriceUpdate{}, false
 	}
 	if len(envelope.Data.Bids) == 0 || len(envelope.Data.Asks) == 0 {
@@ -149,6 +174,41 @@ func (b *Bybit) parseMessage(msg []byte) (types.PriceUpdate, bool) {
 		Ask:        ask,
 		BidSize:    bidSize,
 		AskSize:    askSize,
+		ReceivedAt: time.Now(),
+	}, true
+}
+
+// parseSnapshot decodes a Bybit orderbook.50 snapshot frame into a full BookUpdate.
+// Returns false for delta frames (only snapshots produce L2 updates).
+func (b *Bybit) parseSnapshot(msg []byte) (BookUpdate, bool) {
+	var envelope struct {
+		Type string `json:"type"`
+		Data struct {
+			Bids [][]string `json:"b"`
+			Asks [][]string `json:"a"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		return BookUpdate{}, false
+	}
+	// Only snapshot frames produce L2 updates; deltas are no-ops per ADR-6.
+	if envelope.Type != "snapshot" {
+		return BookUpdate{}, false
+	}
+
+	bids, ok := parseLevels(envelope.Data.Bids)
+	if !ok {
+		return BookUpdate{}, false
+	}
+	asks, ok := parseLevels(envelope.Data.Asks)
+	if !ok {
+		return BookUpdate{}, false
+	}
+
+	return BookUpdate{
+		Exchange:   "bybit",
+		Bids:       bids,
+		Asks:       asks,
 		ReceivedAt: time.Now(),
 	}, true
 }
