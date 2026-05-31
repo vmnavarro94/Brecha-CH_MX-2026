@@ -7,19 +7,39 @@ import type { RawOpportunity, RawTrade, RawPriceUpdate } from '../types/api'
 
 export const EXCHANGES: Exchange[] = ['binance', 'kraken', 'bybit', 'okx', 'gate', 'mexc', 'bitget', 'htx', 'cryptocom', 'kucoin']
 
-const PAIR_COLORS = ['var(--orange)', 'var(--info)', 'var(--up)', 'var(--fg-2)']
-const DEFAULT_FEATURED = ['binance-okx', 'binance-bybit', 'okx-bybit']
+// Stable palette keyed by hashed pair name so a pair keeps the same color
+// regardless of where it lands in the featured ranking.
+const PAIR_PALETTE = [
+  'var(--orange)',
+  'var(--info)',
+  'var(--up)',
+  'var(--warn)',
+  'var(--down)',
+  'var(--fg-2)',
+]
+const DEFAULT_FEATURED = ['binance-okx', 'binance-bybit', 'okx-bybit', 'binance-kraken']
+export const MAX_FEATURED = 6
 
-export function pairColor(pair: string, featuredPairs: string[]): string {
-  const i = featuredPairs.indexOf(pair)
-  return PAIR_COLORS[i >= 0 ? i : 0]
+function hashPair(s: string): number {
+  let h = 5381
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) + h + s.charCodeAt(i)) | 0
+  }
+  return h >>> 0
 }
 
-/** @deprecated use pairColor(pair, featuredPairs) */
+// pairColor returns a deterministic palette color for a given pair name.
+// The second arg is kept for backward compatibility with existing callers but
+// is no longer used — colors are stable per pair.
+export function pairColor(pair: string, _featuredPairs?: string[]): string {
+  return PAIR_PALETTE[hashPair(pair) % PAIR_PALETTE.length]
+}
+
+/** @deprecated kept for tests; use pairColor(pair) */
 export const PAIR_COLOR: Record<string, string> = {
-  'binance-okx': 'var(--orange)',
-  'binance-bybit': 'var(--info)',
-  'okx-bybit': 'var(--up)',
+  'binance-okx': pairColor('binance-okx'),
+  'binance-bybit': pairColor('binance-bybit'),
+  'okx-bybit': pairColor('okx-bybit'),
 }
 
 export interface ZPoint { t: number; z: number }
@@ -47,6 +67,9 @@ interface MarketState {
   pnlHistory: Array<{ time: number; value: number }>
   spreads: SpreadStats[]
   featuredPairs: string[]
+  // selectedPairs: when null, featuredPairs is auto-picked (sticky top by Std).
+  // When non-null, the user has overridden the selection and we keep it as-is.
+  selectedPairs: string[] | null
   zSeries: Record<string, ZPoint[]>
   tradeMarks: Record<string, TradeMark[]>
   circuitBreakerState: CircuitBreakerState
@@ -72,6 +95,7 @@ interface MarketActions {
   setWsConnected: (connected: boolean) => void
   setStrategyPnL: (rows: StrategyPnLRow[]) => void
   fetchStrategyPnL: () => Promise<void>
+  setSelectedPairs: (pairs: string[] | null) => void
 }
 
 function parseOpportunity(raw: RawOpportunity): Opportunity {
@@ -118,14 +142,30 @@ function computeZ(
   return Math.max(-3.6, Math.min(3.6, (spread - stat.Mean) / stat.Std))
 }
 
-// Pick top N pairs by std, requiring minSamples. Falls back to defaults if not enough.
-function pickFeaturedPairs(stats: SpreadStats[], n = 3, minSamples = 50): string[] {
-  const candidates = stats
-    .filter((s) => s.Samples >= minSamples && s.Std > 0)
+// Pick featured pairs with hysteresis: keep current pairs that still qualify and
+// only fill empty slots with new top-Std candidates. This stops the legend from
+// flickering colors/slots every time the Welford std nudges one pair past another.
+function pickFeaturedPairs(
+  stats: SpreadStats[],
+  prev: string[],
+  n = 4,
+  minSamples = 30,
+): string[] {
+  const eligible = stats.filter((s) => s.Samples >= minSamples && s.Std > 0)
+  if (eligible.length === 0) {
+    return prev.length === n ? prev : DEFAULT_FEATURED.slice(0, n)
+  }
+  const eligibleNames = new Set(eligible.map((s) => s.Pair))
+  const sticky = prev.filter((p) => eligibleNames.has(p))
+  if (sticky.length >= n) return sticky.slice(0, n)
+  const slotsLeft = n - sticky.length
+  const fill = eligible
+    .filter((s) => !sticky.includes(s.Pair))
     .sort((a, b) => b.Std - a.Std)
-    .slice(0, n)
+    .slice(0, slotsLeft)
     .map((s) => s.Pair)
-  return candidates.length === n ? candidates : DEFAULT_FEATURED
+  const result = [...sticky, ...fill]
+  return result.length === n ? result : DEFAULT_FEATURED.slice(0, n)
 }
 
 const WINDOW_MS = 60_000
@@ -136,7 +176,8 @@ export const useMarketStore = create<MarketState & MarketActions>((set, _get) =>
   trades: [],
   pnlHistory: [],
   spreads: [],
-  featuredPairs: DEFAULT_FEATURED,
+  featuredPairs: DEFAULT_FEATURED.slice(0, 4),
+  selectedPairs: null,
   zSeries: {},
   tradeMarks: {},
   circuitBreakerState: 'active',
@@ -213,7 +254,10 @@ export const useMarketStore = create<MarketState & MarketActions>((set, _get) =>
   setSpreads: (stats) => set((s) => {
     const now = Date.now()
     const cutoff = now - WINDOW_MS
-    const featured = pickFeaturedPairs(stats)
+    const featured =
+      s.selectedPairs !== null
+        ? s.selectedPairs
+        : pickFeaturedPairs(stats, s.featuredPairs)
     const zSeries = { ...s.zSeries }
     for (const stat of stats) {
       if (!featured.includes(stat.Pair)) continue
@@ -230,6 +274,16 @@ export const useMarketStore = create<MarketState & MarketActions>((set, _get) =>
   setWsConnected: (connected) => set({ wsConnected: connected }),
 
   setStrategyPnL: (rows) => set({ strategyPnL: rows }),
+
+  setSelectedPairs: (pairs) => set((s) => {
+    if (pairs === null) {
+      // Revert to auto-picked featured.
+      const auto = pickFeaturedPairs(s.spreads, s.featuredPairs)
+      return { selectedPairs: null, featuredPairs: auto }
+    }
+    const clipped = pairs.slice(0, MAX_FEATURED)
+    return { selectedPairs: clipped, featuredPairs: clipped }
+  }),
 
   fetchStrategyPnL: async () => {
     try {

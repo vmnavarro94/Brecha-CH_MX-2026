@@ -21,19 +21,19 @@ function resetStore() {
 describe('SpreadChart', () => {
   beforeEach(resetStore)
 
-  it('renders warming banner when Samples < 100', () => {
+  it('renders warming banner when Samples < MIN_SAMPLES', () => {
     useMarketStore.setState({
-      spreads: [{ Pair: 'binance-okx', Mean: 0, Std: 0.001, Samples: 42 }],
+      spreads: [{ Pair: 'binance-okx', Mean: 0, Std: 0.001, Samples: 12 }],
       zSeries: { 'binance-okx': [{ t: Date.now(), z: 0.5 }] },
     })
     render(<SpreadChart />)
     expect(screen.getByText(/Calentando modelo/)).toBeInTheDocument()
-    expect(screen.getByText(/42\/100 samples/)).toBeInTheDocument()
+    expect(screen.getByText(/12\/30 samples/)).toBeInTheDocument()
   })
 
-  it('does NOT render warming banner when Samples >= 100', () => {
+  it('does NOT render warming banner when Samples >= MIN_SAMPLES', () => {
     useMarketStore.setState({
-      spreads: [{ Pair: 'binance-okx', Mean: 0, Std: 0.001, Samples: 100 }],
+      spreads: [{ Pair: 'binance-okx', Mean: 0, Std: 0.001, Samples: 30 }],
       zSeries: { 'binance-okx': [{ t: Date.now(), z: 0.5 }] },
     })
     render(<SpreadChart />)

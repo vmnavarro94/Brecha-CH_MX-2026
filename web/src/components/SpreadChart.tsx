@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, useEffect } from 'react'
-import { Activity, Loader } from 'lucide-react'
-import { useMarketStore, pairColor } from '../store/marketStore'
+import { Activity, Loader, Settings2, RotateCcw } from 'lucide-react'
+import { useMarketStore, pairColor, MAX_FEATURED } from '../store/marketStore'
 import type { SpreadStats } from '../types/api'
 import type { ZPoint, TradeMark } from '../store/marketStore'
 
@@ -11,6 +11,7 @@ function pairLabel(pair: string): string {
 const Z_MIN = -3.5
 const Z_MAX = 3.5
 const WINDOW = 60_000
+const MIN_SAMPLES = 30
 
 const PADL = 30
 const PADR = 14
@@ -143,6 +144,95 @@ const panelStyles = {
       fontSize: '11px',
       color: hot ? 'var(--orange)' : 'var(--fg-3)',
     } as React.CSSProperties),
+
+  toolBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '4px 8px',
+    border: '1px solid var(--line)',
+    borderRadius: 'var(--r-sm)',
+    background: 'transparent',
+    color: 'var(--fg-2)',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '10px',
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase' as const,
+    cursor: 'pointer',
+  } as React.CSSProperties,
+
+  toolBar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  } as React.CSSProperties,
+
+  picker: {
+    position: 'absolute' as const,
+    top: '44px',
+    right: '12px',
+    width: '260px',
+    maxHeight: '360px',
+    overflowY: 'auto' as const,
+    padding: '8px',
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--line)',
+    borderRadius: 'var(--r-md)',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+    zIndex: 10,
+  } as React.CSSProperties,
+
+  pickerHead: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '4px 6px 8px',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '10px',
+    color: 'var(--fg-3)',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.08em',
+  } as React.CSSProperties,
+
+  pickerRow: (selected: boolean, disabled: boolean) =>
+    ({
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      padding: '5px 6px',
+      borderRadius: 'var(--r-sm)',
+      cursor: disabled ? 'not-allowed' : 'pointer',
+      opacity: disabled ? 0.4 : 1,
+      background: selected ? 'rgba(255,197,61,0.08)' : 'transparent',
+      fontFamily: 'var(--font-mono)',
+      fontSize: '11px',
+      color: 'var(--fg-2)',
+    } as React.CSSProperties),
+
+  pickerCheck: (selected: boolean) =>
+    ({
+      width: '10px',
+      height: '10px',
+      borderRadius: '2px',
+      border: '1px solid var(--line)',
+      background: selected ? 'var(--orange)' : 'transparent',
+      flexShrink: 0,
+    } as React.CSSProperties),
+
+  pickerStd: {
+    marginLeft: 'auto',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '10px',
+    color: 'var(--fg-3)',
+  } as React.CSSProperties,
+
+  pickerHint: {
+    padding: '6px',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '10px',
+    color: 'var(--fg-3)',
+    textAlign: 'center' as const,
+  } as React.CSSProperties,
 }
 
 export default function SpreadChart() {
@@ -150,8 +240,11 @@ export default function SpreadChart() {
   const spreads = useMarketStore((s) => s.spreads)
   const tradeMarks = useMarketStore((s) => s.tradeMarks)
   const featuredPairs = useMarketStore((s) => s.featuredPairs)
+  const selectedPairs = useMarketStore((s) => s.selectedPairs)
+  const setSelectedPairs = useMarketStore((s) => s.setSelectedPairs)
   const [vis, setVis] = useState<Record<string, boolean>>({})
   const [width, setWidth] = useState(760)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const [now, setNow] = useState(Date.now())
 
@@ -182,7 +275,7 @@ export default function SpreadChart() {
     spreads.find((s) => s.Pair === p)
 
   const warming = featuredPairs.filter(
-    (p) => vis[p] !== false && statFor(p) && (statFor(p)!.Samples < 100)
+    (p) => vis[p] !== false && statFor(p) && (statFor(p)!.Samples < MIN_SAMPLES)
   )
 
   function pathFor(pair: string): string {
@@ -193,24 +286,93 @@ export default function SpreadChart() {
       .join(' ')
   }
 
+  const togglePicked = (p: string) => {
+    const current = selectedPairs ?? featuredPairs
+    if (current.includes(p)) {
+      const next = current.filter((x) => x !== p)
+      setSelectedPairs(next.length > 0 ? next : null)
+    } else {
+      if (current.length >= MAX_FEATURED) return
+      setSelectedPairs([...current, p])
+    }
+  }
+
+  const pairsSorted = [...spreads]
+    .filter((s) => s.Std > 0)
+    .sort((a, b) => b.Std - a.Std)
+
   return (
     <div style={panelStyles.panel} id="bx-zscore">
       <div style={panelStyles.head}>
         <span style={panelStyles.eyebrow}>
           <Activity size={13} strokeWidth={1.75} /> Z-score del spread · ventana 60 s
         </span>
-        <span style={panelStyles.meta}>(spread − μ) / σ · por par</span>
+        <span style={panelStyles.toolBar}>
+          <span style={panelStyles.meta}>(spread − μ) / σ · por par</span>
+          <button
+            type="button"
+            style={panelStyles.toolBtn}
+            onClick={() => setPickerOpen((v) => !v)}
+            aria-label="Elegir pares"
+            data-testid="pair-picker-toggle"
+          >
+            <Settings2 size={11} strokeWidth={1.75} /> Pares ({featuredPairs.length})
+          </button>
+          {selectedPairs !== null && (
+            <button
+              type="button"
+              style={panelStyles.toolBtn}
+              onClick={() => setSelectedPairs(null)}
+              aria-label="Volver a auto"
+              data-testid="pair-picker-reset"
+            >
+              <RotateCcw size={11} strokeWidth={1.75} /> Auto
+            </button>
+          )}
+        </span>
       </div>
 
       <div style={panelStyles.body} ref={bodyRef}>
+        {pickerOpen && (
+          <div style={panelStyles.picker} data-testid="pair-picker">
+            <div style={panelStyles.pickerHead}>
+              <span>
+                {selectedPairs !== null ? 'Selección manual' : 'Auto (top por σ)'}
+              </span>
+              <span>{featuredPairs.length}/{MAX_FEATURED}</span>
+            </div>
+            {pairsSorted.length === 0 && (
+              <div style={panelStyles.pickerHint}>
+                Esperando spreads con muestras suficientes…
+              </div>
+            )}
+            {pairsSorted.map((s) => {
+              const isOn = featuredPairs.includes(s.Pair)
+              const atCap = !isOn && featuredPairs.length >= MAX_FEATURED
+              return (
+                <div
+                  key={s.Pair}
+                  style={panelStyles.pickerRow(isOn, atCap)}
+                  onClick={() => !atCap && togglePicked(s.Pair)}
+                  data-testid={`pair-row-${s.Pair}`}
+                >
+                  <span style={panelStyles.pickerCheck(isOn)} />
+                  <span style={panelStyles.legSwatch(pairColor(s.Pair))} />
+                  <span>{pairLabel(s.Pair)}</span>
+                  <span style={panelStyles.pickerStd}>σ {(s.Std * 1e4).toFixed(2)} bp</span>
+                </div>
+              )
+            })}
+          </div>
+        )}
         {warming.length > 0 && (() => {
           const stat = statFor(warming[0])!
           return (
             <div style={panelStyles.warming}>
               <Loader size={12} strokeWidth={1.75} />
-              Calentando modelo: {stat.Samples}/100 samples
+              Calentando modelo: {stat.Samples}/{MIN_SAMPLES} samples
               <span style={panelStyles.warningBar}>
-                <span style={panelStyles.warningBarFill(Math.min(100, stat.Samples))} />
+                <span style={panelStyles.warningBarFill(Math.min(100, (stat.Samples / MIN_SAMPLES) * 100))} />
               </span>
             </div>
           )
@@ -271,7 +433,7 @@ export default function SpreadChart() {
                 strokeWidth="1.6"
                 strokeLinejoin="round"
                 strokeLinecap="round"
-                opacity={stat && stat.Samples < 100 ? 0.4 : 1}
+                opacity={stat && stat.Samples < MIN_SAMPLES ? 0.4 : 1}
               />
             )
           })}
@@ -342,9 +504,9 @@ export default function SpreadChart() {
               <span style={panelStyles.legZ(hot)}>
                 z {z >= 0 ? '+' : '−'}{Math.abs(z).toFixed(2)}
               </span>
-              {stat && stat.Samples < 100 && (
+              {stat && stat.Samples < MIN_SAMPLES && (
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--warn)' }}>
-                  · {stat.Samples}/100
+                  · {stat.Samples}/{MIN_SAMPLES}
                 </span>
               )}
             </div>
