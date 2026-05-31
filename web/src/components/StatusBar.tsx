@@ -266,12 +266,14 @@ export default function StatusBar() {
         {latency.samples >= 10 && (
           <>
             <div style={styles.stat}>
-              <span style={styles.statKey}>Detect µs</span>
+              <span style={styles.statKey}>Detect Latency</span>
               <span style={styles.statValue}>
                 p50 {latency.p50.toFixed(1)}
+                <small style={{ fontSize: '11px', color: 'var(--fg-3)' }}>µs</small>
                 <small style={{ fontSize: '11px', color: 'var(--fg-3)' }}>
                   {' '}/ p99 {latency.p99.toFixed(1)}
                 </small>
+                <small style={{ fontSize: '11px', color: 'var(--fg-3)' }}>µs</small>
               </span>
             </div>
             <div style={styles.stat}>
