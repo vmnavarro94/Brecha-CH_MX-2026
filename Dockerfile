@@ -1,14 +1,14 @@
 # Multi-stage build: bundle the frontend, compile the Go binary, ship a tiny image.
 #
 # Stage 1: Vite bundle for the React dashboard.
-FROM node:20-alpine AS web-builder
+FROM node:20-bookworm-slim AS web-builder
 ENV NODE_ENV=development
 ENV CI=true
 WORKDIR /web
 COPY web/package.json web/package-lock.json* ./
-# --include=dev forces devDependencies in case the registry NODE_ENV trickles
-# into the install resolver. Verify tsc landed before continuing so we get a
-# clear error here instead of a confusing "tsc: not found" in the build step.
+# Debian slim instead of alpine because npm 10 hits an "Exit handler never
+# called!" crash on musl during this project's install. Bookworm uses glibc
+# and ships a stable npm. Build-stage size doesn't matter (multi-stage).
 RUN npm ci --include=dev --no-audit --no-fund \
     && test -x node_modules/.bin/tsc \
     && test -x node_modules/.bin/vite
