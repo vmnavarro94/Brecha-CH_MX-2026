@@ -14,6 +14,7 @@ import (
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/model"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/risk"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/server"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/engine"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/store"
 )
 
@@ -61,6 +62,7 @@ func newAPIWithRunner(t *testing.T, st *store.Store, rm *risk.RiskManager, runne
 		"http://localhost:3000", 3,
 		runner,
 		recordingEnabled,
+		nil,
 	)
 }
 
@@ -311,4 +313,62 @@ func TestBacktestRecording_Toggle(t *testing.T) {
 func newStoreWithDB(t *testing.T) *store.Store {
 	t.Helper()
 	return store.NewStore(t.TempDir())
+}
+
+// TestBacktestStart_FactoryBuilderIsCalled verifies that when a factoryBuilder
+// is configured, handleBacktestStart invokes it with the spec and passes the
+// resulting factories to StartAsync. Guards against the nil-factories regression
+// that would silently produce empty replays.
+func TestBacktestStart_FactoryBuilderIsCalled(t *testing.T) {
+	st, rm := newTestComponents(t)
+
+	var capturedSpec backtest.BacktestSpec
+	var capturedFactories []backtest.StrategyFactory
+	runner := &fakeRunner{
+		startAsyncFn: func(_ context.Context, spec backtest.BacktestSpec, factories []backtest.StrategyFactory, _ chan<- backtest.RunResult) (string, error) {
+			capturedSpec = spec
+			capturedFactories = factories
+			return "run-abc", nil
+		},
+	}
+
+	builderCalls := 0
+	builder := func(spec backtest.BacktestSpec) []backtest.StrategyFactory {
+		builderCalls++
+		// Return a non-nil sentinel factory to prove the builder result is forwarded.
+		return []backtest.StrategyFactory{
+			func(_ int64) engine.StrategyIface { return nil },
+		}
+	}
+
+	noop := server.ConfigSnapshot{}
+	handler := server.NewAPIHandler(
+		st, rm,
+		func() map[string]model.SpreadStats { return nil },
+		func() server.ConfigSnapshot { return noop },
+		func(server.ConfigPatch) server.ConfigSnapshot { return noop },
+		nil,
+		"http://localhost:3000", 3,
+		runner,
+		nil,
+		builder,
+	)
+
+	body := `{"from":"2026-05-30T12:00:00Z","to":"2026-05-30T13:00:00Z","speed":1.0,"strategies":["spatial","triangular"],"seed":42}`
+	req := httptest.NewRequest(http.MethodPost, "/api/backtest/start", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	if builderCalls != 1 {
+		t.Errorf("factoryBuilder called %d times, want 1", builderCalls)
+	}
+	if capturedSpec.Seed != 42 {
+		t.Errorf("spec.Seed forwarded: got %d, want 42", capturedSpec.Seed)
+	}
+	if len(capturedFactories) != 1 {
+		t.Errorf("factories forwarded: got %d, want 1", len(capturedFactories))
+	}
 }

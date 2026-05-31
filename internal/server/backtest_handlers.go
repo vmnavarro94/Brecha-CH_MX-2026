@@ -56,9 +56,16 @@ func (h *apiHandler) handleBacktestStart(w http.ResponseWriter, r *http.Request)
 	resultCh := make(chan backtest.RunResult, 1)
 	strategiesJSON, _ := json.Marshal(req.Strategies)
 
+	// Build factories from the spec. If no builder was configured (e.g. in
+	// unit tests), pass nil — the runner accepts that as an empty replay.
+	var factories []backtest.StrategyFactory
+	if h.factoryBuilder != nil {
+		factories = h.factoryBuilder(spec)
+	}
+
 	// StartAsync acquires the lock and returns (runID, nil) immediately, or
 	// ("", ErrAlreadyRunning) if another run is in progress.
-	runID, err := h.backtestRunner.StartAsync(context.Background(), spec, nil, resultCh)
+	runID, err := h.backtestRunner.StartAsync(context.Background(), spec, factories, resultCh)
 	if errors.Is(err, backtest.ErrAlreadyRunning) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "backtest already running"})
 		return

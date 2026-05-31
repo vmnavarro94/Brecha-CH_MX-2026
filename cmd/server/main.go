@@ -368,6 +368,7 @@ func main() {
 	// --- Backtest runner ---
 
 	var backtestRunner server.BacktestRunnerIface
+	var factoryBuilder func(spec backtest.BacktestSpec) []backtest.StrategyFactory
 	if rec != nil {
 		spatialCfg := spatial.Config{
 			Fees:               spatFees,
@@ -393,21 +394,48 @@ func main() {
 			BaseDifferential: cfg.FundingBaseDifferential,
 			Seed:             cfg.FundingSeed,
 		}
-		// factories: always include spatial and triangular; funding via replay.
-		// The caller (POST /start) passes an empty factories slice to use all.
-		_ = spatialCfg
-		_ = triCfg
-		_ = fundCfg
 		btRunner := backtest.NewRunner(rec, st)
-		// Wire default factories onto the runner so StartAsync can use them.
-		// For this release factories are built per-run from the spec's Strategies field
-		// inside the handler. Pre-building them here for reference only.
 		backtestRunner = btRunner
+
+		// factoryBuilder converts a BacktestSpec into a slice of strategy factories.
+		// Each requested strategy gets a fresh factory closure that captures the live
+		// config but constructs a brand-new strategy instance per Runner invocation.
+		factoryBuilder = func(spec backtest.BacktestSpec) []backtest.StrategyFactory {
+			requested := make(map[string]bool, len(spec.Strategies))
+			for _, s := range spec.Strategies {
+				requested[s] = true
+			}
+			// If no strategies are specified, include all three by default.
+			if len(spec.Strategies) == 0 {
+				requested["spatial"] = true
+				requested["triangular"] = true
+				requested["funding"] = true
+			}
+
+			factories := make([]backtest.StrategyFactory, 0, 3)
+			if requested["spatial"] {
+				factories = append(factories, backtest.NewSpatialFactory(spatialCfg))
+			}
+			if requested["triangular"] {
+				// Override Seed with spec.Seed for deterministic replay.
+				localTri := triCfg
+				localTri.Seed = spec.Seed
+				factories = append(factories, backtest.NewTriangularFactory(localTri))
+			}
+			if requested["funding"] {
+				// Load pre-recorded funding rates for the replay window.
+				rates, _ := rec.QueryFundingRates(spec.From, spec.To)
+				localFund := fundCfg
+				localFund.Seed = spec.Seed
+				factories = append(factories, backtest.NewFundingReplayFactory(localFund, rates))
+			}
+			return factories
+		}
 	}
 
 	// --- HTTP server ---
 
-	apiHandler := server.NewAPIHandler(st, rm, func() map[string]model.SpreadStats { return spat.SpreadStats() }, getConfigFn, patchConfigFn, healthFn, cfg.AllowedOrigin, len(exchangeNames), backtestRunner, &recordingEnabled)
+	apiHandler := server.NewAPIHandler(st, rm, func() map[string]model.SpreadStats { return spat.SpreadStats() }, getConfigFn, patchConfigFn, healthFn, cfg.AllowedOrigin, len(exchangeNames), backtestRunner, &recordingEnabled, factoryBuilder)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)

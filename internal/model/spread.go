@@ -1,6 +1,9 @@
 package model
 
-import "math"
+import (
+	"math"
+	"sync"
+)
 
 // SpreadStats holds a snapshot of a spread model's current statistics for a single pair.
 type SpreadStats struct {
@@ -19,7 +22,10 @@ const (
 
 // SpreadModel maintains a running mean and variance using the Welford one-pass algorithm
 // over a fixed-size ring buffer of the most recent WindowSize samples.
+// All exported methods are safe for concurrent use.
 type SpreadModel struct {
+	mu_ sync.RWMutex
+
 	// Welford running state
 	n  int
 	mu float64 // running mean
@@ -41,6 +47,8 @@ func NewSpreadModel() *SpreadModel {
 // Update adds a new sample to the model.
 // If the buffer is at capacity the oldest sample is evicted before the new one is added.
 func (m *SpreadModel) Update(x float64) {
+	m.mu_.Lock()
+	defer m.mu_.Unlock()
 	if m.len == WindowSize {
 		// Evict the oldest sample from Welford state using reverse Welford.
 		old := m.buf[m.pos]
@@ -77,16 +85,27 @@ func (m *SpreadModel) Update(x float64) {
 
 // Mean returns the current running mean.
 func (m *SpreadModel) Mean() float64 {
+	m.mu_.RLock()
+	defer m.mu_.RUnlock()
+	if math.IsNaN(m.mu) || math.IsInf(m.mu, 0) {
+		return 0
+	}
 	return m.mu
 }
 
 // Std returns the population standard deviation of the current window.
 func (m *SpreadModel) Std() float64 {
+	m.mu_.RLock()
+	defer m.mu_.RUnlock()
+	return m.stdLocked()
+}
+
+func (m *SpreadModel) stdLocked() float64 {
 	if m.n < 2 {
 		return 0
 	}
 	variance := m.m2 / float64(m.n)
-	if variance < 0 {
+	if variance < 0 || math.IsNaN(variance) || math.IsInf(variance, 0) {
 		return 0
 	}
 	return math.Sqrt(variance)
@@ -94,7 +113,9 @@ func (m *SpreadModel) Std() float64 {
 
 // ZScore returns (x - mean) / std. Returns 0 when std == 0 to avoid divide-by-zero.
 func (m *SpreadModel) ZScore(x float64) float64 {
-	std := m.Std()
+	m.mu_.RLock()
+	defer m.mu_.RUnlock()
+	std := m.stdLocked()
 	if std == 0 {
 		return 0
 	}
@@ -103,10 +124,14 @@ func (m *SpreadModel) ZScore(x float64) float64 {
 
 // IsReady returns true when at least MinSamples samples have been ingested.
 func (m *SpreadModel) IsReady() bool {
+	m.mu_.RLock()
+	defer m.mu_.RUnlock()
 	return m.n >= MinSamples
 }
 
 // N returns the current number of samples held by the model.
 func (m *SpreadModel) N() int {
+	m.mu_.RLock()
+	defer m.mu_.RUnlock()
 	return m.n
 }

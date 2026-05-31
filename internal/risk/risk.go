@@ -1,6 +1,7 @@
 package risk
 
 import (
+	"sync"
 	"time"
 
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
@@ -46,8 +47,8 @@ type Config struct {
 }
 
 // RiskManager implements a 3-state circuit breaker for trade risk control.
-// All methods are NOT safe for concurrent use; callers must synchronise externally.
 type RiskManager struct {
+	mu         sync.Mutex
 	cfg        Config
 	clock      types.Clock
 	state      State
@@ -66,6 +67,8 @@ func NewRiskManager(cfg Config, clock types.Clock) *RiskManager {
 
 // State returns the current circuit-breaker state.
 func (r *RiskManager) State() State {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.checkPauseExpiry()
 	return r.state
 }
@@ -73,6 +76,8 @@ func (r *RiskManager) State() State {
 // Evaluate returns true when the opportunity passes all risk checks and the circuit
 // breaker is not tripped. Returns false otherwise.
 func (r *RiskManager) Evaluate(opp types.Opportunity) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.checkPauseExpiry()
 
 	if r.state == StatePaused {
@@ -99,6 +104,8 @@ func (r *RiskManager) Evaluate(opp types.Opportunity) bool {
 // RecordTradeResult updates the circuit-breaker state machine based on the trade outcome.
 // netPct is the realised net profit as a fraction of the buy price (negative = loss).
 func (r *RiskManager) RecordTradeResult(netPct float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.checkPauseExpiry()
 
 	if r.state == StatePaused {
@@ -122,7 +129,29 @@ func (r *RiskManager) RecordTradeResult(netPct float64) {
 	}
 }
 
+// SetMinNetProfitPct updates the minimum net profit threshold.
+func (r *RiskManager) SetMinNetProfitPct(v float64) {
+	r.mu.Lock()
+	r.cfg.MinNetProfitPct = v
+	r.mu.Unlock()
+}
+
+// SetConsecutiveLossN updates the number of consecutive losses before circuit-breaker trips.
+func (r *RiskManager) SetConsecutiveLossN(n int) {
+	r.mu.Lock()
+	r.cfg.ConsecutiveLossN = n
+	r.mu.Unlock()
+}
+
+// SetLossThreshold updates the net profit threshold below which a trade is a loss.
+func (r *RiskManager) SetLossThreshold(v float64) {
+	r.mu.Lock()
+	r.cfg.LossThreshold = v
+	r.mu.Unlock()
+}
+
 // checkPauseExpiry transitions from Paused to Active when PauseDuration has elapsed.
+// Caller must hold r.mu.
 func (r *RiskManager) checkPauseExpiry() {
 	if r.state == StatePaused && !r.clock.Now().Before(r.pauseUntil) {
 		r.state = StateActive

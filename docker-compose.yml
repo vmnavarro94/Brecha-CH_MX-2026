@@ -8,11 +8,15 @@ services:
       ALLOWED_ORIGIN: "*"
       INITIAL_USDT_PER_EXCHANGE: "10000"
       INITIAL_BTC_PER_EXCHANGE: "0.1"
-      MIN_NET_PROFIT_PCT: "0.0015"
+      DEMO_MODE: "true"           # false = retail fees (real trading)
+      MIN_NET_PROFIT_PCT: "0.0000" # raise to 0.0015 for real trading
       MAX_POSITION_USDT: "1000"
       CIRCUIT_BREAKER_N: "5"
       CIRCUIT_BREAKER_LOSS_PCT: "-0.005"
       CIRCUIT_BREAKER_PAUSE_MINUTES: "5"
+      DATA_DIR: "/data"
+    volumes:
+      - app-data:/data
     dns:
       - 8.8.8.8
       - 1.1.1.1
@@ -23,3 +27,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  app-data:

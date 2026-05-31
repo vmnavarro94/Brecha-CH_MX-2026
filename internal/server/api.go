@@ -84,17 +84,21 @@ type FeeInfoPatch struct {
 
 // apiHandler holds dependencies for the REST API.
 type apiHandler struct {
-	store            *store.Store
-	risk             *risk.RiskManager
-	spreadsFn        func() map[string]model.SpreadStats
-	getConfigFn      func() ConfigSnapshot
-	patchConfigFn    func(ConfigPatch) ConfigSnapshot
-	healthFn         func() map[string]ExchangeHealth
-	allowedOrigin    string
-	exchangeCount    int
-	mux              *http.ServeMux
-	backtestRunner   BacktestRunnerIface
-	recordingEnabled *atomic.Bool
+	store             *store.Store
+	risk              *risk.RiskManager
+	spreadsFn         func() map[string]model.SpreadStats
+	getConfigFn       func() ConfigSnapshot
+	patchConfigFn     func(ConfigPatch) ConfigSnapshot
+	healthFn          func() map[string]ExchangeHealth
+	allowedOrigin     string
+	exchangeCount     int
+	mux               *http.ServeMux
+	backtestRunner    BacktestRunnerIface
+	recordingEnabled  *atomic.Bool
+	// factoryBuilder converts a BacktestSpec (strategies + seed + time range)
+	// into a slice of StrategyFactory instances suitable for Runner.StartAsync.
+	// nil → handler passes nil factories (empty replay; mainly used by unit tests).
+	factoryBuilder func(spec backtest.BacktestSpec) []backtest.StrategyFactory
 }
 
 // NewAPIHandler creates an http.Handler that serves all /api/* routes.
@@ -112,6 +116,7 @@ func NewAPIHandler(
 	exchangeCount int,
 	runner BacktestRunnerIface,
 	recordingEnabled *atomic.Bool,
+	factoryBuilder func(spec backtest.BacktestSpec) []backtest.StrategyFactory,
 ) http.Handler {
 	h := &apiHandler{
 		store:            st,
@@ -125,6 +130,7 @@ func NewAPIHandler(
 		mux:              http.NewServeMux(),
 		backtestRunner:   runner,
 		recordingEnabled: recordingEnabled,
+		factoryBuilder:   factoryBuilder,
 	}
 	h.mux.HandleFunc("/api/status", h.handleStatus)
 	h.mux.HandleFunc("/api/trades", h.handleTrades)
