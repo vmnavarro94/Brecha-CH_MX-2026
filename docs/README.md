@@ -14,6 +14,7 @@ Esta carpeta contiene la documentación detallada del motor de arbitraje. El REA
 | [`api.md`](api.md) | Contrato REST + eventos WebSocket. |
 | [`backtest.md`](backtest.md) | Recorder WAL + replay determinístico. Métricas computadas. |
 | [`exchanges.md`](exchanges.md) | Los 10 connectors, fees retail reales, disponibilidad de L2 real vs sintético. |
+| [`realismo.md`](realismo.md) | **Qué es real, qué es simulado, qué es modelado.** Para que los evaluadores entiendan exactamente dónde termina la data real y empieza el modelo. |
 
 ## Cómo leer estos docs
 

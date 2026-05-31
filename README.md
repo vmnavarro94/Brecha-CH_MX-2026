@@ -39,6 +39,7 @@ Toda la documentación detallada vive en [`docs/`](docs/). Este README es el ín
 | [`docs/api.md`](docs/api.md) | Contrato REST + eventos WebSocket. |
 | [`docs/backtest.md`](docs/backtest.md) | Recorder WAL + replay determinístico. Métricas computadas. |
 | [`docs/exchanges.md`](docs/exchanges.md) | Los 10 connectors WS, fees retail reales, disponibilidad de L2. |
+| [`docs/realismo.md`](docs/realismo.md) | **Qué es real, qué es simulado, qué es modelado.** Tabla de honestidad técnica + cómo presentárselo a un evaluador. |
 
 ## Quick start (Docker)
 
