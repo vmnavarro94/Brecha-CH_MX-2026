@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/model"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/sizing"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
@@ -19,6 +20,20 @@ type Config struct {
 	MaxPositionUSDT        float64
 	StalenessThreshold     time.Duration
 	ImbalancePenaltyWeight float64 // default 0.15; set to 0 to disable
+
+	// Adaptive threshold: adaptiveMin = BaseMinNetProfitPct + AdaptiveCoeff * spreadModel.Std()
+	// When BaseMinNetProfitPct is zero and MinNetProfitPct is non-zero, constructor copies
+	// MinNetProfitPct into BaseMinNetProfitPct for backward compatibility.
+	BaseMinNetProfitPct float64
+	AdaptiveCoeff       float64
+
+	// Kelly sizing: per-pair estimator parameters.
+	KellyMinSamples int
+	KellyFraction   float64
+
+	// Correlation penalty: recent-trades ring buffer parameters.
+	CorrPenaltyWeight float64
+	CorrWindowN       int
 }
 
 // SpatialStrategy detects cross-exchange spatial arbitrage opportunities.
@@ -28,18 +43,46 @@ type SpatialStrategy struct {
 	cfgMu  sync.RWMutex
 	cfg    Config
 	models map[string]*model.SpreadModel
+
+	// Kelly sizing: per-pair estimators (key = "buyEx-sellEx").
+	muKelly        sync.RWMutex
+	kellyEstimators map[string]*sizing.KellyEstimator
+
+	// Correlation penalty: ring buffer of recent trades.
+	recentTrades *recentTradeRing
 }
 
 // New creates a SpatialStrategy with the given config and spread models.
 // models may be nil; if nil or the pair key is absent, fallback scoring is used.
 // If cfg.ImbalancePenaltyWeight is zero (unset), it defaults to 0.15.
+// If cfg.BaseMinNetProfitPct is zero but cfg.MinNetProfitPct is non-zero,
+// BaseMinNetProfitPct is set from MinNetProfitPct (backward compatibility).
+// If cfg.KellyMinSamples is zero, it defaults to 10.
+// If cfg.KellyFraction is zero, it defaults to 0.25.
+// If cfg.CorrWindowN is zero, it defaults to 50.
 func New(cfg Config, models map[string]*model.SpreadModel) *SpatialStrategy {
 	if cfg.ImbalancePenaltyWeight == 0 {
 		cfg.ImbalancePenaltyWeight = 0.15
 	}
+	// Backward compat: copy MinNetProfitPct into BaseMinNetProfitPct when only the old field is set.
+	if cfg.BaseMinNetProfitPct == 0 && cfg.MinNetProfitPct > 0 {
+		cfg.BaseMinNetProfitPct = cfg.MinNetProfitPct
+	}
+	if cfg.KellyMinSamples == 0 {
+		cfg.KellyMinSamples = 10
+	}
+	if cfg.KellyFraction == 0 {
+		cfg.KellyFraction = 0.25
+	}
+	corrWindowN := cfg.CorrWindowN
+	if corrWindowN == 0 {
+		corrWindowN = 50
+	}
 	return &SpatialStrategy{
-		cfg:    cfg,
-		models: models,
+		cfg:             cfg,
+		models:          models,
+		kellyEstimators: make(map[string]*sizing.KellyEstimator),
+		recentTrades:    newRing(corrWindowN),
 	}
 }
 
@@ -117,9 +160,40 @@ func (s *SpatialStrategy) Detect(
 		}
 
 		netPct := netProfit / buyAsk
-		if netPct < cfg.MinNetProfitPct {
+
+		// Adaptive threshold: adaptiveMin = BaseMinNetProfitPct + AdaptiveCoeff * spreadModel.Std()
+		var spreadStd float64
+		if sm, ok := s.models[pairKey(update.Exchange, sellEx)]; ok {
+			spreadStd = sm.Std()
+		}
+		adaptiveMin := cfg.BaseMinNetProfitPct + cfg.AdaptiveCoeff*spreadStd
+		if netPct < adaptiveMin {
 			continue
 		}
+
+		// Kelly sizing: use per-pair estimator fraction when available and warmed up.
+		buyEx := update.Exchange
+		effectiveFraction := 1.0
+		s.muKelly.RLock()
+		if est, ok := s.kellyEstimators[pairKey(buyEx, sellEx)]; ok {
+			if f := est.Fraction(); f > 0 {
+				effectiveFraction = f
+			}
+		}
+		s.muKelly.RUnlock()
+		baseVolume := effectiveFraction * cfg.MaxPositionUSDT / buyAsk
+
+		// Correlation penalty: reduce volume for recently-traded exchange pairs.
+		matches := s.recentTrades.CountSameExchange(buyEx, sellEx)
+		corrWindowN := float64(cfg.CorrWindowN)
+		if corrWindowN == 0 {
+			corrWindowN = 50
+		}
+		penalty := 1.0 - cfg.CorrPenaltyWeight*float64(matches)/corrWindowN
+		if penalty < 0.1 {
+			penalty = 0.1
+		}
+		maxVolume := baseVolume * penalty
 
 		zScore, score := s.computeScore(update.Exchange, sellEx, netPct)
 
@@ -145,7 +219,7 @@ func (s *SpatialStrategy) Detect(
 			NetProfitPct: decimal.NewFromFloat(netPct),
 			ZScore:       decimal.NewFromFloat(zScore),
 			Score:        decimal.NewFromFloat(score),
-			MaxVolume:    decimal.NewFromFloat(cfg.MaxPositionUSDT / buyAsk),
+			MaxVolume:    decimal.NewFromFloat(maxVolume),
 			DetectedAt:   now,
 			Status:       types.StatusDetected,
 			Strategy:     "spatial",
@@ -173,10 +247,39 @@ func (s *SpatialStrategy) SpreadStats() map[string]model.SpreadStats {
 }
 
 // SetMinNetProfitPct updates the minimum net profit threshold.
+// Also updates BaseMinNetProfitPct for backward compatibility.
 func (s *SpatialStrategy) SetMinNetProfitPct(v float64) {
 	s.cfgMu.Lock()
 	s.cfg.MinNetProfitPct = v
+	s.cfg.BaseMinNetProfitPct = v
 	s.cfgMu.Unlock()
+}
+
+// RecordTradeReturn updates the per-pair Kelly estimator and the recent-trades ring buffer
+// for the given exchange pair with the realized net return fraction.
+// Concurrency-safe: write-locks the Kelly map for create-if-missing, then releases before
+// calling estimator.Record (which has its own lock).
+func (s *SpatialStrategy) RecordTradeReturn(buyEx, sellEx string, netPct float64) {
+	key := pairKey(buyEx, sellEx)
+
+	// Create estimator if absent (write lock for map mutation).
+	s.muKelly.Lock()
+	est, ok := s.kellyEstimators[key]
+	if !ok {
+		s.cfgMu.RLock()
+		minN := s.cfg.KellyMinSamples
+		fracCap := s.cfg.KellyFraction
+		s.cfgMu.RUnlock()
+		est = sizing.New(minN, fracCap)
+		s.kellyEstimators[key] = est
+	}
+	s.muKelly.Unlock()
+
+	// Record the return (estimator has its own RWMutex).
+	est.Record(netPct)
+
+	// Append to the ring buffer.
+	s.recentTrades.Push(recentTradeEntry{BuyEx: buyEx, SellEx: sellEx})
 }
 
 // SetMaxPositionUSDT updates the maximum position size.
