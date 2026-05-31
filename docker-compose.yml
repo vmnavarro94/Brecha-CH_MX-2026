@@ -8,8 +8,8 @@ services:
       ALLOWED_ORIGIN: "*"
       INITIAL_USDT_PER_EXCHANGE: "10000"
       INITIAL_BTC_PER_EXCHANGE: "0.1"
-      DEMO_MODE: "true"           # false = retail fees (real trading)
-      MIN_NET_PROFIT_PCT: "0.0000" # raise to 0.0015 for real trading
+      DEMO_MODE: "false"          # true = TweaksPanel allows live fee editing (fees themselves are always real)
+      MIN_NET_PROFIT_PCT: "0.0015" # 15 bps after fees — realistic threshold for real retail trading
       MAX_POSITION_USDT: "1000"
       CIRCUIT_BREAKER_N: "5"
       CIRCUIT_BREAKER_LOSS_PCT: "-0.005"

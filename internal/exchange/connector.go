@@ -43,21 +43,11 @@ var Fees = map[string]FeeConfig{
 	"kucoin":    {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00050, NetworkLatencyBps: 3.0},
 }
 
-// DemoFees mirrors the real retail Fees map. Demo mode no longer artificially
-// inflates opportunity visibility — judges see honest pricing from the start.
-// Adjust via PATCH /api/config or the TweaksPanel to explore lower-fee scenarios.
-var DemoFees = map[string]FeeConfig{
-	"binance":   {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00020, NetworkLatencyBps: 1.0},
-	"kraken":    {TakerFee: 0.0026, SlippageFactor: 0.0003, WithdrawalBTC: 0.00005, NetworkLatencyBps: 2.0},
-	"bybit":     {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00050, NetworkLatencyBps: 2.0},
-	"okx":       {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00040, NetworkLatencyBps: 2.0},
-	"gate":      {TakerFee: 0.002, SlippageFactor: 0.0003, WithdrawalBTC: 0.00050, NetworkLatencyBps: 3.0},
-	"mexc":      {TakerFee: 0.002, SlippageFactor: 0.0003, WithdrawalBTC: 0.00050, NetworkLatencyBps: 3.0},
-	"bitget":    {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00030, NetworkLatencyBps: 2.0},
-	"htx":       {TakerFee: 0.002, SlippageFactor: 0.0003, WithdrawalBTC: 0.00010, NetworkLatencyBps: 3.0},
-	"cryptocom": {TakerFee: 0.0007, SlippageFactor: 0.0002, WithdrawalBTC: 0.00006, NetworkLatencyBps: 2.0},
-	"kucoin":    {TakerFee: 0.001, SlippageFactor: 0.0002, WithdrawalBTC: 0.00050, NetworkLatencyBps: 3.0},
-}
+// DemoFees is retained as an alias to Fees for backward-compat with consumers
+// that may still reference it. Demo mode flag is now purely a UI semantic
+// (controls whether the TweaksPanel allows live fee editing).
+// Deprecated: use exchange.Fees directly.
+var DemoFees = Fees
 
 func backoff(attempt int) time.Duration {
 	base := time.Second
