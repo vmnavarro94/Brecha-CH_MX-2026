@@ -22,6 +22,13 @@ var (
 	ErrInsufficientBalance = errors.New("insufficient balance")
 )
 
+// TradeReturnReporter is called by Execute after a successful spatial trade to record
+// the realized net return fraction back into the strategy's Kelly estimator.
+// SpatialStrategy satisfies this interface structurally (no cyclic import needed).
+type TradeReturnReporter interface {
+	RecordTradeReturn(buyEx, sellEx string, netPct float64)
+}
+
 // bookSource provides L2 order book data keyed by exchange name.
 // Aggregator implements this interface; fakes are used in tests.
 type bookSource interface {
@@ -37,13 +44,14 @@ func (noopBookSource) Book(_ string) types.OrderBook { return types.OrderBook{} 
 // Executor simulates trade execution: validates freshness, walks the synthetic order book,
 // computes VWAP, updates wallets, and persists the trade record.
 type Executor struct {
-	wallet             *wallet.MultiWallet
-	store              *store.Store
-	snapshotFn         func() map[string]types.PriceUpdate
-	clock              types.Clock
-	stalenessThreshold time.Duration
-	depthCfg           depth.Config
-	bookSource         bookSource
+	wallet               *wallet.MultiWallet
+	store                *store.Store
+	snapshotFn           func() map[string]types.PriceUpdate
+	clock                types.Clock
+	stalenessThreshold   time.Duration
+	depthCfg             depth.Config
+	bookSource           bookSource
+	tradeReturnReporter  TradeReturnReporter
 }
 
 // NewExecutor creates a new Executor with depth.Config for synthetic book generation.
@@ -87,6 +95,13 @@ func NewExecutorWithBookSource(
 		depthCfg:           depthCfg,
 		bookSource:         bs,
 	}
+}
+
+// WithTradeReturnReporter sets the reporter that will be called after each successful
+// spatial trade. Returns the executor for method chaining.
+func (e *Executor) WithTradeReturnReporter(r TradeReturnReporter) *Executor {
+	e.tradeReturnReporter = r
+	return e
 }
 
 // Execute attempts to execute an arbitrage opportunity.
@@ -223,6 +238,13 @@ func (e *Executor) Execute(opp *types.Opportunity) error {
 		Strategy:        opp.Strategy,
 	}
 	e.store.SaveTrade(trade)
+
+	// Post-trade callback: report realized net pct back to the strategy for Kelly sizing.
+	// Only triggered for spatial opportunities (ADR-8, ADR-9).
+	if opp.Strategy == "spatial" && e.tradeReturnReporter != nil {
+		actualNetPct := (vwapSellF - vwapBuyF) / vwapBuyF
+		e.tradeReturnReporter.RecordTradeReturn(opp.BuyExchange, opp.SellExchange, actualNetPct)
+	}
 
 	// Mark opportunity executed.
 	opp.Status = types.StatusExecuted
