@@ -637,6 +637,62 @@ func TestAPIHealth_IncludesParseLatency(t *testing.T) {
 	}
 }
 
+// TestAPIHealth_HasL2Field verifies that has_l2 is true for binance/bybit/okx
+// and false for the remaining seven exchanges. Spec: D5.
+func TestAPIHealth_HasL2Field(t *testing.T) {
+	st, rm := newTestComponents(t)
+
+	allExchanges := []string{"binance", "kraken", "bybit", "okx", "gate", "mexc", "bitget", "htx", "cryptocom", "kucoin"}
+	l2Exchanges := map[string]bool{"binance": true, "bybit": true, "okx": true}
+
+	healthFn := func() map[string]server.ExchangeHealth {
+		out := make(map[string]server.ExchangeHealth, len(allExchanges))
+		for _, ex := range allExchanges {
+			out[ex] = server.ExchangeHealth{
+				Fresh:   true,
+				HasL2:   l2Exchanges[ex],
+			}
+		}
+		return out
+	}
+
+	noop := server.ConfigSnapshot{}
+	handler := server.NewAPIHandler(
+		st, rm,
+		func() map[string]model.SpreadStats { return nil },
+		func() server.ConfigSnapshot { return noop },
+		func(server.ConfigPatch) server.ConfigSnapshot { return noop },
+		healthFn,
+		"http://localhost:3000", 10,
+		nil, nil, nil,
+	)
+
+	resp, body := getJSON(t, handler, "/api/health")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	exchanges, ok := body["exchanges"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected exchanges map in response")
+	}
+
+	for _, ex := range allExchanges {
+		entry, ok := exchanges[ex].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected %s in exchanges", ex)
+		}
+		wantL2 := l2Exchanges[ex]
+		gotL2, exists := entry["has_l2"]
+		if !exists {
+			t.Errorf("%s: expected has_l2 field", ex)
+			continue
+		}
+		if gotL2.(bool) != wantL2 {
+			t.Errorf("%s has_l2: got %v, want %v", ex, gotL2, wantL2)
+		}
+	}
+}
+
 func TestAPIConfig_PatchFees_SlippageOnly(t *testing.T) {
 	st, rm := newTestComponents(t)
 
