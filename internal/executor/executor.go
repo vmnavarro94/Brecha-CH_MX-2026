@@ -22,6 +22,18 @@ var (
 	ErrInsufficientBalance = errors.New("insufficient balance")
 )
 
+// bookSource provides L2 order book data keyed by exchange name.
+// Aggregator implements this interface; fakes are used in tests.
+type bookSource interface {
+	Book(exchange string) types.OrderBook
+}
+
+// noopBookSource is the default when no real L2 source is configured.
+// It always returns an empty book, which causes the executor to use synthetic depth.
+type noopBookSource struct{}
+
+func (noopBookSource) Book(_ string) types.OrderBook { return types.OrderBook{} }
+
 // Executor simulates trade execution: validates freshness, walks the synthetic order book,
 // computes VWAP, updates wallets, and persists the trade record.
 type Executor struct {
@@ -31,9 +43,11 @@ type Executor struct {
 	clock              types.Clock
 	stalenessThreshold time.Duration
 	depthCfg           depth.Config
+	bookSource         bookSource
 }
 
 // NewExecutor creates a new Executor with depth.Config for synthetic book generation.
+// Uses a no-op book source (always falls back to synthetic depth).
 func NewExecutor(
 	w *wallet.MultiWallet,
 	st *store.Store,
@@ -49,6 +63,29 @@ func NewExecutor(
 		clock:              clock,
 		stalenessThreshold: stalenessThreshold,
 		depthCfg:           depthCfg,
+		bookSource:         noopBookSource{},
+	}
+}
+
+// NewExecutorWithBookSource creates an Executor that uses real L2 depth when available,
+// falling back to synthetic depth when the book for an exchange is empty.
+func NewExecutorWithBookSource(
+	w *wallet.MultiWallet,
+	st *store.Store,
+	snapshotFn func() map[string]types.PriceUpdate,
+	clock types.Clock,
+	stalenessThreshold time.Duration,
+	depthCfg depth.Config,
+	bs bookSource,
+) *Executor {
+	return &Executor{
+		wallet:             w,
+		store:              st,
+		snapshotFn:         snapshotFn,
+		clock:              clock,
+		stalenessThreshold: stalenessThreshold,
+		depthCfg:           depthCfg,
+		bookSource:         bs,
 	}
 }
 
@@ -105,7 +142,7 @@ func (e *Executor) Execute(opp *types.Opportunity) error {
 	targetVolume := decimal.NewFromFloat(volumeF)
 
 	// --- Buy leg: walk the ask book ---
-	askLevels := depth.AskLevels(bboAsk, e.depthCfg)
+	askLevels := e.getAskLevels(opp.BuyExchange, bboAsk)
 	buyFilled, vwapBuy, buyPartial := depth.Walk(askLevels, targetVolume)
 
 	if buyFilled.IsZero() {
@@ -128,7 +165,7 @@ func (e *Executor) Execute(opp *types.Opportunity) error {
 	e.wallet.Credit(opp.BuyExchange, "BTC", buyFilledF)
 
 	// --- Sell leg: walk the bid book ---
-	bidLevels := depth.BidLevels(bboBid, e.depthCfg)
+	bidLevels := e.getBidLevels(opp.SellExchange, bboBid)
 	sellFilled, vwapSell, _ := depth.Walk(bidLevels, buyFilled)
 	sellFilledF, _ := sellFilled.Float64()
 
@@ -192,4 +229,33 @@ func (e *Executor) Execute(opp *types.Opportunity) error {
 	e.store.Save(*opp)
 
 	return nil
+}
+
+// getAskLevels returns real L2 ask levels from bookSource when available,
+// falling back to synthetic depth when the book is empty. Spec: D3.
+func (e *Executor) getAskLevels(exchange string, bboAsk decimal.Decimal) []depth.Level {
+	ob := e.bookSource.Book(exchange)
+	if len(ob.Asks) > 0 {
+		return toDepthLevels(ob.Asks)
+	}
+	return depth.AskLevels(bboAsk, e.depthCfg)
+}
+
+// getBidLevels returns real L2 bid levels from bookSource when available,
+// falling back to synthetic depth when the book is empty. Spec: D3.
+func (e *Executor) getBidLevels(exchange string, bboBid decimal.Decimal) []depth.Level {
+	ob := e.bookSource.Book(exchange)
+	if len(ob.Bids) > 0 {
+		return toDepthLevels(ob.Bids)
+	}
+	return depth.BidLevels(bboBid, e.depthCfg)
+}
+
+// toDepthLevels converts []types.OrderBookLevel to []depth.Level for VWAP walking.
+func toDepthLevels(levels []types.OrderBookLevel) []depth.Level {
+	out := make([]depth.Level, len(levels))
+	for i, l := range levels {
+		out[i] = depth.Level{Price: l.Price, Qty: l.Qty}
+	}
+	return out
 }

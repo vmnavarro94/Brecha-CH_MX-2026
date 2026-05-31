@@ -606,3 +606,113 @@ func TestExecute_AsymmetricFillAborts(t *testing.T) {
 		t.Errorf("kraken BTC changed after abort: got %v, want %v", w.Balance("kraken", "BTC"), initialKrakenBTC)
 	}
 }
+
+// fakeBookSource implements bookSource for testing.
+type fakeBookSource struct {
+	books map[string]types.OrderBook
+}
+
+func (f *fakeBookSource) Book(exchange string) types.OrderBook {
+	return f.books[exchange]
+}
+
+// TestExecutor_UsesRealL2WhenAvailable verifies that when bookSource returns a non-empty
+// book for the buy exchange, the executor uses those real levels for the ask walk.
+// Spec: D3.
+func TestExecutor_UsesRealL2WhenAvailable(t *testing.T) {
+	now := time.Now()
+	clk := fixedClock{t: now}
+
+	ask := 50000.0
+	bid := 50300.0
+
+	w := wallet.NewMultiWallet(
+		[]string{"binance", "kraken"},
+		map[string]float64{"USDT": 1000.0, "BTC": 1.0},
+	)
+	st := store.NewStore(t.TempDir())
+
+	snapshot := map[string]types.PriceUpdate{
+		"binance": makeUpdate("binance", 49900.0, ask, now),
+		"kraken":  makeUpdate("kraken", bid, 50400.0, now),
+	}
+	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+
+	// Real L2 book with a single ask level at a price slightly above BBO.
+	realAskPrice := 50010.0
+	bs := &fakeBookSource{
+		books: map[string]types.OrderBook{
+			"binance": {
+				Asks: []types.OrderBookLevel{
+					{Price: decimal.NewFromFloat(realAskPrice), Qty: decimal.NewFromFloat(1.0)},
+				},
+				Bids: []types.OrderBookLevel{
+					{Price: decimal.NewFromFloat(49990.0), Qty: decimal.NewFromFloat(1.0)},
+				},
+			},
+		},
+	}
+
+	opp := makeOpp("binance", "kraken", ask, bid, 0.01)
+	st.Save(*opp)
+
+	ex := NewExecutorWithBookSource(w, st, snapshotFn, clk, stalenessThreshold, seededDepthCfg(1), bs)
+	if err := ex.Execute(opp); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	trades := st.AllTrades()
+	if len(trades) != 1 {
+		t.Fatalf("expected 1 trade, got %d", len(trades))
+	}
+	// The VWAP buy price should be the real ask level price, not the BBO ask.
+	bp, _ := trades[0].BuyPrice.Float64()
+	if bp != realAskPrice {
+		t.Errorf("BuyPrice: got %v, want real L2 ask %v", bp, realAskPrice)
+	}
+}
+
+// TestExecutor_FallsBackToSyntheticWhenEmpty verifies that when bookSource returns an
+// empty book, the executor falls back to synthetic depth generation.
+// Spec: D3.
+func TestExecutor_FallsBackToSyntheticWhenEmpty(t *testing.T) {
+	now := time.Now()
+	clk := fixedClock{t: now}
+
+	ask := 50000.0
+	bid := 50300.0
+
+	w := wallet.NewMultiWallet(
+		[]string{"binance", "kraken"},
+		map[string]float64{"USDT": 1000.0, "BTC": 1.0},
+	)
+	st := store.NewStore(t.TempDir())
+
+	snapshot := map[string]types.PriceUpdate{
+		"binance": makeUpdate("binance", 49900.0, ask, now),
+		"kraken":  makeUpdate("kraken", bid, 50400.0, now),
+	}
+	snapshotFn := func() map[string]types.PriceUpdate { return snapshot }
+
+	// Empty book source — executor must fall back to synthetic.
+	bs := &fakeBookSource{books: map[string]types.OrderBook{}}
+
+	opp := makeOpp("binance", "kraken", ask, bid, 0.01)
+	st.Save(*opp)
+
+	// seededDepthCfg (N=1, qty=0.1) → single level, vwap == bboAsk == 50000.
+	ex := NewExecutorWithBookSource(w, st, snapshotFn, clk, stalenessThreshold, seededDepthCfg(1), bs)
+	if err := ex.Execute(opp); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	trades := st.AllTrades()
+	if len(trades) != 1 {
+		t.Fatalf("expected 1 trade, got %d", len(trades))
+	}
+	// Synthetic fallback: vwap == bboAsk.
+	bp, _ := trades[0].BuyPrice.Float64()
+	if bp != ask {
+		t.Errorf("BuyPrice: got %v, want synthetic bboAsk %v", bp, ask)
+	}
+}
