@@ -3,11 +3,17 @@
 # Stage 1: Vite bundle for the React dashboard.
 FROM node:20-alpine AS web-builder
 ENV NODE_ENV=development
+ENV CI=true
 WORKDIR /web
 COPY web/package.json web/package-lock.json* ./
-RUN npm ci --include=dev --no-audit --no-fund
+# --include=dev forces devDependencies in case the registry NODE_ENV trickles
+# into the install resolver. Verify tsc landed before continuing so we get a
+# clear error here instead of a confusing "tsc: not found" in the build step.
+RUN npm ci --include=dev --no-audit --no-fund \
+    && test -x node_modules/.bin/tsc \
+    && test -x node_modules/.bin/vite
 COPY web/ ./
-RUN npm run build
+RUN node_modules/.bin/tsc && node_modules/.bin/vite build
 
 # Stage 2: Go binary using vendored dependencies (no internet required at compile time).
 FROM golang:1.26-alpine AS go-builder
