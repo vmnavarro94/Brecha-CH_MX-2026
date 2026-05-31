@@ -1,7 +1,7 @@
 # fly.toml — Brecha Arbitrage Engine on Fly.io.
 # Docs: https://fly.io/docs/reference/configuration/
 
-app = 'coding-challenge-mexico'
+app = 'brecha-engine-ch-mexico'
 primary_region = 'lax'
 
 [build]
