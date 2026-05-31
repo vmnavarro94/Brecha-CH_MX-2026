@@ -25,6 +25,21 @@ func (f *fakeConnector) Name() string                      { return f.name }
 func (f *fakeConnector) Updates() <-chan types.PriceUpdate { return f.ch }
 func (f *fakeConnector) Connect(ctx context.Context) error { return nil }
 
+// fakeBookConnector implements exchange.Connector + exchange.BookConnector for tests.
+type fakeBookConnector struct {
+	fakeConnector
+	bookCh chan exchange.BookUpdate
+}
+
+func newFakeBookConnector(name string) *fakeBookConnector {
+	return &fakeBookConnector{
+		fakeConnector: fakeConnector{name: name, ch: make(chan types.PriceUpdate, 16)},
+		bookCh:        make(chan exchange.BookUpdate, 16),
+	}
+}
+
+func (f *fakeBookConnector) BookUpdates() <-chan exchange.BookUpdate { return f.bookCh }
+
 func mkUpdate(ex string, bid, ask float64) types.PriceUpdate {
 	return types.PriceUpdate{
 		Exchange:   ex,
@@ -161,5 +176,80 @@ func TestAggregator_FanOutNonBlocking(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("producer blocked — drain is not non-blocking")
+	}
+}
+
+// TestAggregator_Book_WithL2Connector verifies that Book() returns non-empty Bids and
+// Asks after a BookUpdate is received from a BookConnector. Spec: D2.
+func TestAggregator_Book_WithL2Connector(t *testing.T) {
+	fbc := newFakeBookConnector("binance")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agg := NewAggregator([]exchange.Connector{fbc})
+	_ = agg.Start(ctx)
+
+	// Emit a BookUpdate.
+	fbc.bookCh <- exchange.BookUpdate{
+		Exchange: "binance",
+		Bids: []types.OrderBookLevel{
+			{Price: decimal.NewFromFloat(73000), Qty: decimal.NewFromFloat(1.0)},
+		},
+		Asks: []types.OrderBookLevel{
+			{Price: decimal.NewFromFloat(73001), Qty: decimal.NewFromFloat(0.5)},
+		},
+		ReceivedAt: time.Now(),
+	}
+
+	// Poll until the aggregator processes it (max 100ms).
+	var ob types.OrderBook
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		ob = agg.Book("binance")
+		if len(ob.Bids) > 0 && len(ob.Asks) > 0 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	if len(ob.Bids) == 0 {
+		t.Error("Book(binance).Bids should be non-empty after BookUpdate")
+	}
+	if len(ob.Asks) == 0 {
+		t.Error("Book(binance).Asks should be non-empty after BookUpdate")
+	}
+	if ob.Bids[0].Price.String() != "73000" {
+		t.Errorf("Bids[0].Price: got %s, want 73000", ob.Bids[0].Price.String())
+	}
+}
+
+// TestAggregator_Book_NoL2Connector verifies that Book() returns an empty OrderBook for
+// a connector that does not implement BookConnector. Spec: D2.
+func TestAggregator_Book_NoL2Connector(t *testing.T) {
+	fc := newFakeConnector("kraken")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agg := NewAggregator([]exchange.Connector{fc})
+	_ = agg.Start(ctx)
+
+	ob := agg.Book("kraken")
+	if len(ob.Bids) != 0 || len(ob.Asks) != 0 {
+		t.Errorf("Book(kraken) should be empty for non-BookConnector, got %+v", ob)
+	}
+}
+
+// TestAggregator_HasL2 verifies HasL2 returns true for BookConnector and false otherwise.
+func TestAggregator_HasL2(t *testing.T) {
+	fbc := newFakeBookConnector("binance")
+	fc := newFakeConnector("kraken")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agg := NewAggregator([]exchange.Connector{fbc, fc})
+	_ = agg.Start(ctx)
+
+	if !agg.HasL2("binance") {
+		t.Error("HasL2(binance) should be true for BookConnector")
+	}
+	if agg.HasL2("kraken") {
+		t.Error("HasL2(kraken) should be false for non-BookConnector")
 	}
 }
