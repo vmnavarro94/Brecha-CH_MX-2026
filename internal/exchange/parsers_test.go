@@ -186,6 +186,41 @@ func TestOKXParseMessage_SubscribeAck(t *testing.T) {
 	}
 }
 
+// TestOKX_ParseBooks5 verifies that a books5 frame produces a BookUpdate with 5 levels.
+// Spec: D1 (OKX books5).
+func TestOKX_ParseBooks5(t *testing.T) {
+	o := NewOKX("ws://test", nil)
+	msg := []byte(`{
+		"arg":{"channel":"books5","instId":"BTC-USDT"},
+		"data":[{
+			"bids":[["73019.5","0.5","0","1"],["73019.0","1.0","0","2"],["73018.5","0.3","0","1"],["73018.0","0.8","0","2"],["73017.5","0.2","0","1"]],
+			"asks":[["73020.0","0.4","0","1"],["73020.5","0.9","0","2"],["73021.0","0.1","0","1"],["73021.5","0.6","0","2"],["73022.0","0.3","0","1"]],
+			"instId":"BTC-USDT",
+			"ts":"1597026383085",
+			"checksum":-855196043
+		}]
+	}`)
+	bu, ok := o.parseBooks5(msg)
+	if !ok {
+		t.Fatal("parseBooks5 should accept a well-formed books5 frame")
+	}
+	if bu.Exchange != "okx" {
+		t.Errorf("Exchange: got %q, want okx", bu.Exchange)
+	}
+	if len(bu.Bids) != 5 {
+		t.Errorf("Bids: got %d levels, want 5", len(bu.Bids))
+	}
+	if len(bu.Asks) != 5 {
+		t.Errorf("Asks: got %d levels, want 5", len(bu.Asks))
+	}
+	if bu.Bids[0].Price.String() != "73019.5" {
+		t.Errorf("Bids[0].Price: got %s, want 73019.5", bu.Bids[0].Price.String())
+	}
+	if bu.Asks[0].Price.String() != "73020" {
+		t.Errorf("Asks[0].Price: got %s, want 73020", bu.Asks[0].Price.String())
+	}
+}
+
 // TestKrakenParseMessage verifies the legacy v1 ticker array-frame parse.
 // Format: [channelID, {ticker}, "ticker", "XBT/USDT"]
 // ticker.b = [price, wholeLotVolume, lotVolume]

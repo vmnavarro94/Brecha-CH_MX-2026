@@ -15,6 +15,7 @@ import (
 type OKX struct {
 	wsURL   string
 	ch      chan types.PriceUpdate
+	bookCh  chan BookUpdate
 	logger  *slog.Logger
 	tracker *metrics.LatencyTracker
 }
@@ -23,6 +24,7 @@ func NewOKX(wsURL string, tracker *metrics.LatencyTracker) *OKX {
 	return &OKX{
 		wsURL:   wsURL,
 		ch:      make(chan types.PriceUpdate, 512),
+		bookCh:  make(chan BookUpdate, 256),
 		logger:  slog.Default().With("exchange", "okx"),
 		tracker: tracker,
 	}
@@ -30,6 +32,7 @@ func NewOKX(wsURL string, tracker *metrics.LatencyTracker) *OKX {
 
 func (o *OKX) Name() string                      { return "okx" }
 func (o *OKX) Updates() <-chan types.PriceUpdate { return o.ch }
+func (o *OKX) BookUpdates() <-chan BookUpdate     { return o.bookCh }
 
 func (o *OKX) Connect(ctx context.Context) error {
 	go o.runWithReconnect(ctx)
@@ -63,9 +66,13 @@ func (o *OKX) run(ctx context.Context) error {
 	}
 	defer conn.Close()
 
+	// Subscribe to both tickers (BBO) and books5 (L2 snapshots).
 	sub := map[string]any{
-		"op":   "subscribe",
-		"args": []map[string]string{{"channel": "tickers", "instId": "BTC-USDT"}},
+		"op": "subscribe",
+		"args": []map[string]string{
+			{"channel": "tickers", "instId": "BTC-USDT"},
+			{"channel": "books5", "instId": "BTC-USDT"},
+		},
 	}
 	if err := conn.WriteJSON(sub); err != nil {
 		return err
@@ -101,17 +108,42 @@ func (o *OKX) run(ctx context.Context) error {
 		if string(msg) == "pong" {
 			continue
 		}
+
 		t0 := time.Now()
-		pu, ok := o.parseMessage(msg)
-		if !ok {
+
+		// Peek at the channel to dispatch.
+		var peek struct {
+			Event string `json:"event"`
+			Arg   struct {
+				Channel string `json:"channel"`
+			} `json:"arg"`
+		}
+		if err := json.Unmarshal(msg, &peek); err != nil || peek.Event != "" {
 			continue
 		}
-		if o.tracker != nil {
-			o.tracker.Record(time.Since(t0))
-		}
-		select {
-		case o.ch <- pu:
-		default:
+
+		switch peek.Arg.Channel {
+		case "tickers":
+			pu, ok := o.parseMessage(msg)
+			if !ok {
+				continue
+			}
+			if o.tracker != nil {
+				o.tracker.Record(time.Since(t0))
+			}
+			select {
+			case o.ch <- pu:
+			default:
+			}
+		case "books5":
+			bu, ok := o.parseBooks5(msg)
+			if !ok {
+				continue
+			}
+			select {
+			case o.bookCh <- bu:
+			default:
+			}
 		}
 	}
 }
@@ -154,6 +186,38 @@ func (o *OKX) parseMessage(msg []byte) (types.PriceUpdate, bool) {
 		Ask:        ask,
 		BidSize:    bidSize,
 		AskSize:    askSize,
+		ReceivedAt: time.Now(),
+	}, true
+}
+
+// parseBooks5 decodes an OKX books5 frame into a BookUpdate.
+// Frame format: {"arg":{"channel":"books5","instId":"BTC-USDT"},"data":[{"bids":[["p","q","0","n"]...],"asks":[...],...}]}
+// Each level is [price, qty, deprecated, orderCount].
+func (o *OKX) parseBooks5(msg []byte) (BookUpdate, bool) {
+	var frame struct {
+		Data []struct {
+			Bids [][]string `json:"bids"`
+			Asks [][]string `json:"asks"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(msg, &frame); err != nil || len(frame.Data) == 0 {
+		return BookUpdate{}, false
+	}
+	entry := frame.Data[0]
+
+	bids, ok := parseLevels(entry.Bids)
+	if !ok {
+		return BookUpdate{}, false
+	}
+	asks, ok := parseLevels(entry.Asks)
+	if !ok {
+		return BookUpdate{}, false
+	}
+
+	return BookUpdate{
+		Exchange:   "okx",
+		Bids:       bids,
+		Asks:       asks,
 		ReceivedAt: time.Now(),
 	}, true
 }
