@@ -1,21 +1,13 @@
-# Multi-stage build: bundle the frontend, compile the Go binary, ship a tiny image.
+# Workflow:
+#   1. cd web && npm install && npm run build   (genera web/dist/)
+#   2. docker build -t brecha .                  (o docker compose up --build)
+#   3. (opcional) git add web/dist && git commit  para que fly deploy lo use
 #
-# Stage 1: Vite bundle for the React dashboard.
-FROM node:20-bookworm-slim AS web-builder
-ENV NODE_ENV=development
-ENV CI=true
-WORKDIR /web
-COPY web/package.json web/package-lock.json* ./
-# Debian slim instead of alpine because npm 10 hits an "Exit handler never
-# called!" crash on musl during this project's install. Bookworm uses glibc
-# and ships a stable npm. Build-stage size doesn't matter (multi-stage).
-RUN npm ci --include=dev --no-audit --no-fund \
-    && test -x node_modules/.bin/tsc \
-    && test -x node_modules/.bin/vite
-COPY web/ ./
-RUN node_modules/.bin/tsc && node_modules/.bin/vite build
+# web/dist está tracked en git para que fly deploy / docker build remotos
+# no necesiten correr npm ci adentro del container (evita el bug
+# "Exit handler never called!" de npm en redes inestables).
 
-# Stage 2: Go binary using vendored dependencies (no internet required at compile time).
+# Stage 1: Go binary using vendored dependencies (no internet required at compile time).
 FROM golang:1.26-alpine AS go-builder
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -26,13 +18,13 @@ COPY config/ ./config/
 RUN CGO_ENABLED=0 GOOS=linux \
     go build -mod=vendor -trimpath -ldflags="-s -w" -o /server ./cmd/server
 
-# Stage 3: Minimal runtime. CA certs come from the go-builder stage so the
-# image stays tiny (~15 MB total). Healthcheck for docker-compose uses TCP
-# probe instead of wget since scratch has no shell.
+# Stage 2: Minimal runtime. CA certs come from the go-builder stage so the
+# image stays tiny (~5 MB total).
 FROM scratch
 COPY --from=go-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 WORKDIR /app
 COPY --from=go-builder /server .
-COPY --from=web-builder /web/dist ./web/dist
+# web/dist must be pre-built and committed before docker build / fly deploy.
+COPY web/dist ./web/dist
 EXPOSE 8080
 CMD ["./server"]
