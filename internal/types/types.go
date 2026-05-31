@@ -62,6 +62,13 @@ type OrderBookLevel struct {
 	Qty   decimal.Decimal
 }
 
+// OrderBook holds a full L2 snapshot for one exchange.
+type OrderBook struct {
+	Bids       []OrderBookLevel
+	Asks       []OrderBookLevel
+	ReceivedAt time.Time
+}
+
 type Trade struct {
 	ID              string
 	OpportunityID   string
