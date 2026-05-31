@@ -2,9 +2,10 @@
 #
 # Stage 1: Vite bundle for the React dashboard.
 FROM node:20-alpine AS web-builder
+ENV NODE_ENV=development
 WORKDIR /web
 COPY web/package.json web/package-lock.json* ./
-RUN npm ci --silent
+RUN npm ci --include=dev --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
