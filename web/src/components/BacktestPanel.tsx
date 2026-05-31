@@ -330,7 +330,7 @@ export default function BacktestPanel() {
   const isRunning = runStatus?.state === 'running'
 
   return (
-    <div style={styles.panel}>
+    <div style={styles.panel} id="bx-backtest">
       <div style={styles.head}>
         <span style={styles.eyebrow}>
           <BarChart2 size={11} />

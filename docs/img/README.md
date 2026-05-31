@@ -26,7 +26,9 @@ El segundo argumento es cuántos segundos esperar después de abrir el dashboard
 | `opportunity-feed.png` | Feed de oportunidades en vivo. |
 | `tweaks-panel.png` | Panel de parámetros editables. |
 | `trade-history.png` | Historial paginado de trades. |
+| `backtest-panel.png` | Panel Backtest: controles + run history. |
 | `pair-picker-open.png` | Popover de selector de pares (zoom). |
+| `brecha-logo.svg` | Logo principal usado en el README. |
 | `manifest.json` | Metadata de la última corrida del script (url, viewport, timestamp). |
 
 ## Convenciones

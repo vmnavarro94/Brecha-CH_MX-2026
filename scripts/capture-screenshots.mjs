@@ -31,6 +31,7 @@ const PANELS = [
   { name: 'opportunity-feed',  selector: '#bx-feed' },
   { name: 'tweaks-panel',      selector: '.tw-panel' },
   { name: 'trade-history',     selector: '#bx-trades' },
+  { name: 'backtest-panel',    selector: '#bx-backtest' },
 ]
 
 async function ensureDir(p) {

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0F0F0F"/>
+      <stop offset="100%" stop-color="#080808"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="160" rx="16" fill="url(#bgGrad)"/>
+
+  <!-- Mark: two offset orange bars -->
+  <rect x="40" y="58" width="56" height="14" rx="7" fill="#F7931A"/>
+  <rect x="56" y="86" width="56" height="14" rx="7" fill="#F7931A"/>
+
+  <!-- Wordmark -->
+  <text x="150" y="88" font-family="'IBM Plex Sans', 'Helvetica Neue', sans-serif" font-weight="600" font-size="48" letter-spacing="-0.5" fill="#F2F2F2">brecha</text>
+  <text x="150" y="116" font-family="'IBM Plex Mono', 'Courier New', monospace" font-weight="400" font-size="13" letter-spacing="3" fill="#888888">ARBITRAGE · ENGINE</text>
+</svg>

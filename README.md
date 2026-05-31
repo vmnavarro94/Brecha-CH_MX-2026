@@ -1,8 +1,29 @@
-# Brecha — Motor de arbitraje BTC
+<p align="center">
+  <img src="docs/img/brecha-logo.svg" alt="Brecha — Arbitrage Engine" width="520">
+</p>
+
+<p align="center">
+  <strong>Motor de arbitraje de Bitcoin en tiempo real sobre 10 exchanges</strong><br/>
+  Scoring estadístico · sizing Kelly · backtest determinístico
+</p>
+
+<p align="center">
+  <a href="https://www.coding-challenge-mexico.com/challenge">
+    <img alt="Coding Challenge Mexico 2026" src="https://img.shields.io/badge/Coding%20Challenge-Mexico%202026-F7931A?style=flat-square">
+  </a>
+  <img alt="Go 1.22" src="https://img.shields.io/badge/Go-1.22-00ADD8?style=flat-square&logo=go&logoColor=white">
+  <img alt="React 18" src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black">
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-WAL-003B57?style=flat-square&logo=sqlite&logoColor=white">
+  <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-green?style=flat-square">
+</p>
+
+---
 
 Detección de arbitraje de Bitcoin en tiempo real sobre 10 exchanges, con latencia de motor sub-milisegundo, modelo estadístico de reversión a la media que prioriza spreads anómalos, profundidad real/sintética de order book con ejecución walk-the-book y fills parciales, sizing Kelly por par y backtesting determinístico.
 
-Construido para el [Coding Challenge Mexico 2026](https://www.coding-challenge-mexico.com/challenge).
+<p align="center">
+  <img src="docs/img/00-dashboard-full.png" alt="Brecha dashboard" width="900">
+</p>
 
 ## Documentación
 

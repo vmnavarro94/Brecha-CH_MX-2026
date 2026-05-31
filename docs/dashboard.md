@@ -429,7 +429,60 @@ Barra horizontal ordenada por P&L acumulado por exchange pair.
 
 ---
 
-## 12. P&L por strategy (StrategyPnL)
+## 12. Backtest
+
+![BacktestPanel](img/backtest-panel.png)
+
+Panel al final del dashboard. Permite lanzar replays determinísticos sobre los frames grabados por el recorder WAL y ver métricas cuantitativas por strategy.
+
+### Controles (top row)
+
+| Campo | Significa |
+|-------|-----------|
+| **From** | Inicio del rango temporal a replayear (datetime-local). |
+| **To** | Fin del rango. |
+| **Speed (0=max)** | `0` = sin sleep entre frames (réplica instantánea). `1.0` = realtime. `2.0` = 2× realtime. |
+| **Seed** | PRNG seed para reproducibilidad. Mismo seed + mismo rango = mismo resultado. |
+| **Strategies** | Checkboxes: `spatial` · `triangular` · `funding`. |
+| **Run** | Botón naranja. POST a `/api/backtest/start`. |
+
+### Progress bar
+
+Aparece durante el run. Poll cada 500ms a `/api/backtest/status`. Muestra `state` (`running` / `done`) + `progress` (0-100%).
+
+### Results — RUN {short_id}
+
+Aparece cuando el run termina. Tabla por strategy:
+
+| Columna | Significa |
+|---------|-----------|
+| **Strategy** | `spatial` / `funding` / `triangular`. |
+| **Total PnL** | Net profit acumulado del replay. |
+| **Sharpe** | Retorno ajustado por volatilidad. >2 es bueno, >3 excelente. En demo se infla mucho porque executor solo emite trades positivos. |
+| **Max DD** | Pico-a-valle máximo en USDT. |
+| **Hit Rate** | Fracción de trades positivos. |
+| **Trades** | Cantidad total ejecutada en el replay. |
+
+### Run History
+
+Tabla con todos los runs persistidos. Click en una fila carga sus métricas en la Results table de arriba (sin volver a correr).
+
+| Columna | Contenido |
+|---------|-----------|
+| **ID** | 8 primeros chars del UUID. |
+| **Status** | `done` cuando terminó, `running` mientras corre, `failed` si hubo error. |
+| **Started** | Timestamp de cuando empezó el run. |
+| **Strategies** | Comma-separated list de strategies seleccionadas. |
+
+### Recording
+
+El recorder arranca **on por default** desde el server. Cada `PriceUpdate` que entra al agregador se persiste a la WAL SQLite. Para apagarlo (no recomendado): `POST /api/backtest/recording` con `{"enabled": false}`.
+
+Ver `docs/backtest.md` para el ciclo completo de uso, las métricas en detalle y casos prácticos (A/B testing de parámetros, sweep de thresholds, etc.).
+
+---
+
+## 13. P&L por strategy (StrategyPnL)
 
 Similar a PerPairPnL pero agrupado por strategy (`spatial`, `funding`, `triangular`).
 
