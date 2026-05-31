@@ -29,3 +29,12 @@ web/.env.local
 
 # Logs
 *.log
+
+# Agent workspaces (Claude Code skills + plugin caches)
+.claude/
+.remember/
+.superpowers/
+.atl/
+
+# Design system scratchpad (Figma export, not part of the runtime)
+Brecha Design System/
