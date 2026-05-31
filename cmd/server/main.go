@@ -217,7 +217,7 @@ func main() {
 		MaxQtyBTC: cfg.DepthMaxQtyBTC,
 		Rand:      rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
-	exec := executor.NewExecutor(w, st, agg.Snapshot, clk, cfg.StalenessThreshold, depthCfg)
+	exec := executor.NewExecutorWithBookSource(w, st, agg.Snapshot, clk, cfg.StalenessThreshold, depthCfg, agg)
 	fundingExec := executor.NewFundingExecutor(st, clk)
 	triangularExec := executor.NewTriangularExecutor(st, clk, cfg.TriangularTakerFee, cfg.TriangularNotional)
 
@@ -360,7 +360,10 @@ func main() {
 		now := time.Now()
 		for _, ex := range exchangeNames {
 			p, ok := snap[ex]
-			h := server.ExchangeHealth{UptimePct: uptimeTracker.UptimePct(ex)}
+			h := server.ExchangeHealth{
+				UptimePct: uptimeTracker.UptimePct(ex),
+				HasL2:     agg.HasL2(ex),
+			}
 			if ok {
 				age := now.Sub(p.ReceivedAt)
 				h.LastUpdateAt = p.ReceivedAt.UTC().Format(time.RFC3339)
