@@ -26,7 +26,7 @@ flowchart LR
         FD["Funding Strategy"]
         TR["Triangular Strategy"]
         SM["Spread Models<br/>Welford μ/σ"]
-        SS["model.ScoreSignal<br/>(z, score)"]
+        SS["model.ScoreSignal<br/>z and score"]
         PQ["Priority Queue<br/>max-heap"]
         RM["Risk Manager<br/>circuit breaker"]
         DP["Depth Module<br/>L2 + VWAP walk"]
@@ -94,34 +94,34 @@ sequenceDiagram
     participant Conn as Exchange WS
     participant Agg as Aggregator
     participant Loop as Processing Loop
-    participant Eng as Engine.ProcessUpdate
-    participant Strats as Strategies (3)
+    participant Eng as Engine ProcessUpdate
+    participant Strats as Strategies x3
     participant PQ as Priority Queue
     participant RM as Risk Manager
     participant Exec as Executor
     participant Store as SQLite Store
     participant Hub as WS Hub
 
-    Conn->>Agg: PriceUpdate(bid, ask)
+    Conn->>Agg: PriceUpdate bid ask
     Agg->>Loop: update via channel
-    Loop->>Eng: ProcessUpdate(u)
-    Eng->>Strats: Detect(u, snapshot, now)
-    Strats-->>Eng: []Opportunity
-    Eng->>PQ: heap.Push for each opp
+    Loop->>Eng: ProcessUpdate u
+    Eng->>Strats: Detect u snapshot now
+    Strats-->>Eng: Opportunity slice
+    Eng->>PQ: heap Push for each opp
 
     Note over Loop: every EXECUTION_INTERVAL_MS
-    Loop->>Eng: DequeueTop()
+    Loop->>Eng: DequeueTop
     Eng-->>Loop: top opp
-    Loop->>RM: Evaluate(opp)
+    Loop->>RM: Evaluate opp
     alt accepted
-        Loop->>Exec: Execute(opp)
+        Loop->>Exec: Execute opp
         Exec->>Store: SaveTrade
         Exec->>Hub: trade_executed
     else rejected
-        Loop->>Store: opp.Status=skipped
-        Loop->>Hub: circuit_breaker (if paused)
+        Loop->>Store: opp Status skipped
+        Loop->>Hub: circuit_breaker if paused
     end
-    Loop->>Hub: opportunity (with final status)
+    Loop->>Hub: opportunity with final status
 ```
 
 #### Componentes del engine

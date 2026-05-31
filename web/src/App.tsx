@@ -13,6 +13,7 @@ import TopOpportunityBanner from './components/TopOpportunityBanner'
 import ReconnectBanner from './components/ReconnectBanner'
 import PerPairPnL from './components/PerPairPnL'
 import StrategyPnL from './components/StrategyPnL'
+import BacktestPanel from './components/BacktestPanel'
 
 export default function App() {
   useMarketSocket()
@@ -39,6 +40,9 @@ export default function App() {
         </div>
         <div className="bx-fullrow">
           <TradeHistory />
+        </div>
+        <div className="bx-fullrow">
+          <BacktestPanel />
         </div>
       </div>
     </Shell>

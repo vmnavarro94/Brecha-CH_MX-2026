@@ -2,7 +2,9 @@
 
 Subsistema completo de grabación + replay determinístico. Permite reproducir cualquier ventana de mercado real contra las strategies y obtener métricas cuantitativas reproducibles.
 
-> **Nota**: el panel del dashboard que exponía esta funcionalidad está actualmente oculto. Toda la funcionalidad sigue disponible vía los endpoints REST documentados abajo.
+El recorder arranca **encendido por default** desde el server (`recordingEnabled.Store(true)` al boot en `cmd/server/main.go`). Cada `PriceUpdate` que entra al agregador queda persistido en la WAL SQLite. Para apagarlo (no recomendado salvo si la DB crece demasiado), usar `POST /api/backtest/recording` con `{"enabled": false}`.
+
+El panel del dashboard `BacktestPanel` está visible en el bottom del dashboard. Permite lanzar replays directo desde la UI.
 
 ## Por qué existe
 
@@ -90,20 +92,20 @@ Permite que strategies basadas en `now` (ej. cooldowns) se comporten igual en re
 
 ## Uso
 
-### Habilitar recording
+### Recording
 
-Por default no graba. Activar:
+Está **encendido por default**. Cada tick se persiste. Para apagar (no recomendado):
 
 ```bash
 curl -X POST localhost:8088/api/backtest/recording \
   -H 'Content-Type: application/json' \
-  -d '{"enabled": true}'
+  -d '{"enabled": false}'
 ```
 
-A partir de ese instante, cada tick se persiste. Para apagar:
+Re-encender:
 
 ```bash
-curl -X POST localhost:8088/api/backtest/recording -d '{"enabled": false}'
+curl -X POST localhost:8088/api/backtest/recording -d '{"enabled": true}'
 ```
 
 ### Lanzar un replay

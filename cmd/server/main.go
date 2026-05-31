@@ -68,6 +68,7 @@ func main() {
 	}
 
 	var recordingEnabled atomic.Bool
+	recordingEnabled.Store(true)
 
 	w := wallet.NewMultiWallet(exchangeNames, map[string]float64{
 		"USDT": cfg.InitialUSDTPerExchange,
