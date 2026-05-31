@@ -36,5 +36,9 @@ web/.env.local
 .superpowers/
 .atl/
 
+# SDD artifacts (proposals/specs/designs) — kept local, not part of deliverable
+openspec/
+docs/superpowers/
+
 # Design system scratchpad (Figma export, not part of the runtime)
 Brecha Design System/

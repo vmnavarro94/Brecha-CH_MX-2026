@@ -392,7 +392,6 @@ internal/
   wallet/           balances simulados
 config/             configuración por env
 web/                dashboard React + Vite
-openspec/           artefactos SDD: proposals, specs, designs, tasks, verify reports
 openapi.yaml        contrato REST OpenAPI 3.0
 ```
 
