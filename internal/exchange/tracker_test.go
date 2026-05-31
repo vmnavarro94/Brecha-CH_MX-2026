@@ -8,17 +8,18 @@ import (
 )
 
 // TestBinance_ParseTrackerRecordsLatency verifies that when a Binance connector is
-// constructed with a non-nil LatencyTracker, parsing a valid frame records a sample.
+// constructed with a non-nil LatencyTracker, parsing a valid wrapped frame records a sample.
 func TestBinance_ParseTrackerRecordsLatency(t *testing.T) {
 	tracker := &metrics.LatencyTracker{}
 	b := NewBinance("ws://test", tracker)
 
-	msg := []byte(`{"u":400900217,"s":"BTCUSDT","b":"73000.50","B":"1.234","a":"73001.20","A":"2.345"}`)
+	// Combined-stream wrapped bookTicker frame.
+	msg := []byte(`{"stream":"btcusdt@bookTicker","data":{"u":400900217,"s":"BTCUSDT","b":"73000.50","B":"1.234","a":"73001.20","A":"2.345"}}`)
 
 	t0 := time.Now()
 	pu, ok := b.parseMessage(msg)
 	if !ok {
-		t.Fatal("parseMessage should accept a well-formed bookTicker frame")
+		t.Fatal("parseMessage should accept a well-formed wrapped bookTicker frame")
 	}
 	if b.tracker != nil {
 		b.tracker.Record(time.Since(t0))
@@ -35,10 +36,11 @@ func TestBinance_ParseTrackerRecordsLatency(t *testing.T) {
 func TestBinance_ParseTrackerNilSafe(t *testing.T) {
 	b := NewBinance("ws://test", nil)
 
-	msg := []byte(`{"u":400900217,"s":"BTCUSDT","b":"73000.50","B":"1.234","a":"73001.20","A":"2.345"}`)
+	// Combined-stream wrapped bookTicker frame.
+	msg := []byte(`{"stream":"btcusdt@bookTicker","data":{"u":400900217,"s":"BTCUSDT","b":"73000.50","B":"1.234","a":"73001.20","A":"2.345"}}`)
 	pu, ok := b.parseMessage(msg)
 	if !ok {
-		t.Fatal("parseMessage should accept a well-formed bookTicker frame")
+		t.Fatal("parseMessage should accept a well-formed wrapped bookTicker frame")
 	}
 	// Simulate nil-guarded record (should not panic)
 	if b.tracker != nil {

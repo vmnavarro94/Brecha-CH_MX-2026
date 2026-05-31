@@ -4,13 +4,14 @@ import (
 	"testing"
 )
 
-// TestBinanceParseMessage verifies the @bookTicker frame parse.
-func TestBinanceParseMessage(t *testing.T) {
+// TestBinance_ParseBookTicker verifies the combined-stream wrapped bookTicker frame parse.
+// Frame format: {"stream":"btcusdt@bookTicker","data":{...}}
+func TestBinance_ParseBookTicker(t *testing.T) {
 	b := NewBinance("ws://test", nil)
-	msg := []byte(`{"u":400900217,"s":"BTCUSDT","b":"73000.50","B":"1.234","a":"73001.20","A":"2.345"}`)
+	msg := []byte(`{"stream":"btcusdt@bookTicker","data":{"u":400900217,"s":"BTCUSDT","b":"73000.50","B":"1.234","a":"73001.20","A":"2.345"}}`)
 	pu, ok := b.parseMessage(msg)
 	if !ok {
-		t.Fatal("parseMessage should accept a well-formed bookTicker frame")
+		t.Fatal("parseMessage should accept a well-formed wrapped bookTicker frame")
 	}
 	if pu.Exchange != "binance" {
 		t.Errorf("Exchange: got %q, want binance", pu.Exchange)
@@ -31,8 +32,41 @@ func TestBinanceParseMessage_Garbage(t *testing.T) {
 	if _, ok := b.parseMessage([]byte(`not json`)); ok {
 		t.Error("parseMessage should reject non-JSON")
 	}
-	if _, ok := b.parseMessage([]byte(`{"b":"not-a-number","a":"73001.20"}`)); ok {
-		t.Error("parseMessage should reject non-numeric bid")
+	if _, ok := b.parseMessage([]byte(`{"stream":"btcusdt@bookTicker","data":{"b":"not-a-number","a":"73001.20"}}`)); ok {
+		t.Error("parseMessage should reject non-numeric bid in wrapped frame")
+	}
+}
+
+// TestBinance_ParseDepth20 verifies that a combined-stream depth20@100ms frame
+// produces a BookUpdate with non-empty Bids and Asks. Spec: D3.
+func TestBinance_ParseDepth20(t *testing.T) {
+	b := NewBinance("ws://test", nil)
+	msg := []byte(`{
+		"stream":"btcusdt@depth20@100ms",
+		"data":{
+			"lastUpdateId":160,
+			"bids":[["0.0024","10"],["0.0023","5"]],
+			"asks":[["0.0026","100"],["0.0027","200"]]
+		}
+	}`)
+	bu, ok := b.parseDepth20(msg)
+	if !ok {
+		t.Fatal("parseDepth20 should accept a well-formed depth20 frame")
+	}
+	if bu.Exchange != "binance" {
+		t.Errorf("Exchange: got %q, want binance", bu.Exchange)
+	}
+	if len(bu.Bids) != 2 {
+		t.Errorf("Bids: got %d levels, want 2", len(bu.Bids))
+	}
+	if len(bu.Asks) != 2 {
+		t.Errorf("Asks: got %d levels, want 2", len(bu.Asks))
+	}
+	if bu.Bids[0].Price.String() != "0.0024" {
+		t.Errorf("Bids[0].Price: got %s, want 0.0024", bu.Bids[0].Price.String())
+	}
+	if bu.Asks[0].Price.String() != "0.0026" {
+		t.Errorf("Asks[0].Price: got %s, want 0.0026", bu.Asks[0].Price.String())
 	}
 }
 
