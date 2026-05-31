@@ -573,6 +573,70 @@ func TestAPIPnLByStrategy_LegacyEmptyStrategyGroupedAsUnknown(t *testing.T) {
 	}
 }
 
+// --- GET /api/health parse latency fields ---
+
+func TestAPIHealth_IncludesParseLatency(t *testing.T) {
+	st, rm := newTestComponents(t)
+
+	healthFn := func() map[string]server.ExchangeHealth {
+		return map[string]server.ExchangeHealth{
+			"binance": {
+				LastUpdateAt: "2026-05-30T12:00:00Z", LastUpdateAgeMs: 100, Fresh: true, UptimePct: 0.99,
+				ParseLatencyP50Us: 42, ParseLatencyP99Us: 99,
+			},
+			"kraken": {
+				LastUpdateAt: "2026-05-30T12:00:00Z", LastUpdateAgeMs: 500, Fresh: true, UptimePct: 0.90,
+				ParseLatencyP50Us: 0, ParseLatencyP99Us: 0, // cold-start
+			},
+		}
+	}
+
+	noop := server.ConfigSnapshot{}
+	handler := server.NewAPIHandler(
+		st, rm,
+		func() map[string]model.SpreadStats { return nil },
+		func() server.ConfigSnapshot { return noop },
+		func(server.ConfigPatch) server.ConfigSnapshot { return noop },
+		healthFn,
+		"http://localhost:3000", 2,
+		nil, nil, nil,
+	)
+
+	resp, body := getJSON(t, handler, "/api/health")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	exchanges, ok := body["exchanges"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected exchanges map in response")
+	}
+
+	bn, ok := exchanges["binance"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected binance in exchanges")
+	}
+	if _, exists := bn["parse_p50_us"]; !exists {
+		t.Error("expected parse_p50_us field in binance health")
+	}
+	if _, exists := bn["parse_p99_us"]; !exists {
+		t.Error("expected parse_p99_us field in binance health")
+	}
+	if bn["parse_p50_us"].(float64) != 42 {
+		t.Errorf("binance parse_p50_us: got %v, want 42", bn["parse_p50_us"])
+	}
+	if bn["parse_p99_us"].(float64) != 99 {
+		t.Errorf("binance parse_p99_us: got %v, want 99", bn["parse_p99_us"])
+	}
+
+	kr, ok := exchanges["kraken"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected kraken in exchanges")
+	}
+	if kr["parse_p50_us"].(float64) != 0 {
+		t.Errorf("kraken parse_p50_us cold-start: got %v, want 0", kr["parse_p50_us"])
+	}
+}
+
 func TestAPIConfig_PatchFees_SlippageOnly(t *testing.T) {
 	st, rm := newTestComponents(t)
 

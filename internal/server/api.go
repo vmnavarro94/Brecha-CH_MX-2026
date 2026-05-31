@@ -34,10 +34,12 @@ type BacktestRunnerIface interface {
 
 // ExchangeHealth describes the live connection state of a single exchange.
 type ExchangeHealth struct {
-	LastUpdateAt    string  `json:"last_update_at"`
-	LastUpdateAgeMs int64   `json:"last_update_age_ms"`
-	Fresh           bool    `json:"fresh"`
-	UptimePct       float64 `json:"uptime_pct"`
+	LastUpdateAt      string  `json:"last_update_at"`
+	LastUpdateAgeMs   int64   `json:"last_update_age_ms"`
+	Fresh             bool    `json:"fresh"`
+	UptimePct         float64 `json:"uptime_pct"`
+	ParseLatencyP50Us int64   `json:"parse_p50_us"`
+	ParseLatencyP99Us int64   `json:"parse_p99_us"`
 }
 
 // FeeInfo holds the active trading costs for a single exchange.
