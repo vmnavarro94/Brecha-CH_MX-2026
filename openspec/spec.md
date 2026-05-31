@@ -947,6 +947,172 @@ The frontend MUST include a `StrategyPnL` panel that reads from the `/api/pnl-by
 
 ---
 
+## 13. Advanced Detection Signals (F1–F5 microstructure enhancements)
+
+### Capability W1: WebSocket compression negotiated per RFC 7692
+
+GIVEN a browser WebSocket client that advertises `permessage-deflate` in its upgrade request
+WHEN it connects to the `/ws` endpoint
+THEN the server upgrade response includes the `Sec-WebSocket-Extensions: permessage-deflate` header, confirming negotiation succeeded
+
+GIVEN a JSON spread update payload whose raw serialized size exceeds 100 bytes
+WHEN the hub broadcasts it to a connected browser client
+THEN the wire bytes transferred for that frame are measurably smaller than the uncompressed byte count (verifiable in browser DevTools network panel)
+
+**Test strategy**: build-level verification — compression is enabled in `internal/server/ws.go` and negotiated by gorilla automatically.
+
+---
+
+### Capability L1–L2: Dynamic latency cost scales with sell-side counterparty age
+
+GIVEN a sell-side counterparty quote with `ReceivedAt = now` (age = 0 ms)
+WHEN the engine computes the effective latency cost for that counterparty
+THEN `effectiveCost == baseCost * 1.0` (factor = 1×)
+
+GIVEN a sell-side counterparty quote with `ReceivedAt = now - 1000ms` (age = 1 s)
+WHEN the engine computes the effective latency cost
+THEN `effectiveCost == baseCost * 2.0` (factor = 2×)
+
+GIVEN a sell-side counterparty quote with `ReceivedAt = now - 2000ms` (age = 2 s, equal to the staleness threshold)
+WHEN the engine computes the effective latency cost
+THEN `effectiveCost == baseCost * 3.0` (factor = 3×)
+
+GIVEN a sell-side counterparty quote whose age exceeds 2000 ms (e.g., 5000 ms)
+WHEN the engine computes the effective latency cost
+THEN `effectiveCost == baseCost * 3.0` — the factor is clamped and does not exceed 3×
+
+GIVEN the buy-leg counterparty quote (age may be non-zero)
+WHEN the engine computes latency cost
+THEN only the sell-side counterparty age drives the dynamic scaling; the buy-side age has no effect on the multiplier
+
+**Test strategy**: unit — deterministic age values (0ms, 1000ms, 2000ms, 5000ms), assert cost scaling factor.
+
+---
+
+### Capability I1–I3: Imbalance penalty from order book sizes
+
+GIVEN a sell-side order book with `BidSize = 10`, `AskSize = 10` (perfectly balanced)
+WHEN the imbalance penalty is computed with the default weight (0.15)
+THEN `penalty == 0.0` (no penalty for a balanced book)
+
+GIVEN a sell-side order book with `BidSize = 20`, `AskSize = 5` (bid-heavy — favors sell execution)
+WHEN the imbalance penalty is computed
+THEN `imbalance = (20-5)/(20+5) = 0.60 > 0`, so `max(0, -0.60) = 0`, therefore `penalty == 0.0`
+
+GIVEN a sell-side order book with `BidSize = 5`, `AskSize = 20` (ask-heavy — harms sell execution)
+WHEN the imbalance penalty is computed with default weight 0.15
+THEN `imbalance = (5-20)/(5+20) = -0.60`, `max(0, 0.60) = 0.60`, `penalty = 0.15 * 0.60 = 0.09`
+
+GIVEN a computed base score and a non-zero imbalance penalty
+WHEN the opportunity score is finalized before priority-queue insertion
+THEN `finalScore = baseScore - penalty`
+
+GIVEN `spatial.Config` is initialized without explicitly setting `ImbalancePenaltyWeight`
+WHEN any penalty is computed
+THEN the weight used is `0.15` (the default)
+
+GIVEN `SetImbalancePenaltyWeight(w)` where `w > 0`
+WHEN the opportunity is scored
+THEN the live penalty calculation reflects the new weight without restarting the engine
+
+**Test strategy**: unit — table-driven cases for balanced/bid-heavy/ask-heavy sell books; assert penalty formula and zero-book guard.
+
+---
+
+### Capability P1–P3: Per-exchange WebSocket parse latency telemetry
+
+GIVEN the codebase after PR1 lands
+WHEN any file imports `internal/metrics`
+THEN `metrics.LatencyTracker` is available with the same public surface as the former `engine.LatencyTracker`: `Record(d time.Duration)`, `Stats() (p50, p99 time.Duration, samples int)` with a ring buffer of 1024 entries
+
+GIVEN the same codebase
+WHEN the `internal/engine` package is inspected
+THEN it imports `internal/metrics` (not the other way around); there is no circular import between `engine` and `exchange`
+
+GIVEN a connector constructed with a non-nil `*metrics.LatencyTracker`
+WHEN a WebSocket message is received
+THEN T0 is captured immediately after `conn.ReadMessage()` returns and T1 is captured immediately before the parsed update is emitted on the connector's output channel; `tracker.Record(T1 - T0)` is called on every successfully parsed frame
+
+GIVEN a connector constructed with `nil` as the `*metrics.LatencyTracker`
+WHEN a WebSocket message is received
+THEN no recording call is made and the connector behaves identically to its current behavior (nil-safe no-op path)
+
+GIVEN at least 10 samples have been recorded for a given exchange's tracker
+WHEN `GET /api/health` is called
+THEN the JSON response for that exchange entry contains integer fields `parse_p50_us` and `parse_p99_us` representing microsecond percentiles; both values are >= 0
+
+GIVEN fewer than 10 samples have been recorded for an exchange (cold-start)
+WHEN `GET /api/health` is called
+THEN `parse_p50_us` and `parse_p99_us` for that exchange are `0`
+
+GIVEN an existing `/api/health` consumer that reads known fields
+WHEN PR1 lands
+THEN the consumer is unaffected — `parse_p50_us` and `parse_p99_us` are additive fields; no existing field is renamed or removed
+
+**Test strategy**: unit for tracker mechanics and nil-safety; integration for API response shape and cold-start gate.
+
+---
+
+### Capability D1–D5: Real L2 depth on Binance, Bybit, OKX with executor fallback
+
+GIVEN the codebase after PR2 lands
+WHEN `internal/exchange` is inspected
+THEN an interface `BookConnector` exists with a single method `BookUpdates() <-chan BookUpdate`
+
+GIVEN the 10 exchange connectors in the codebase
+WHEN each is type-asserted against `exchange.BookConnector`
+THEN Binance, Bybit, and OKX satisfy the assertion; the remaining seven do not
+
+GIVEN the feed Aggregator is running with Binance connected
+WHEN `Aggregator.Book("binance")` is called
+THEN it returns the latest L2 snapshot (non-empty slice of `types.OrderBookLevel`)
+
+GIVEN the feed Aggregator is running with Kraken connected (no L2 support)
+WHEN `Aggregator.Book("kraken")` is called
+THEN it returns `nil` or an empty slice
+
+GIVEN an opportunity where `BuyExchange = "binance"` and Binance has a non-empty book
+WHEN the executor performs the VWAP walk to estimate fill cost
+THEN it walks the real L2 levels returned by `Aggregator.Book("binance")`, not synthetic depth
+
+GIVEN an opportunity where `BuyExchange = "kraken"` (no L2 available)
+WHEN the executor performs the VWAP walk
+THEN it falls back to synthetic depth generation — behavior identical to the current pre-PR2 implementation
+
+GIVEN a Bybit `orderbook.50.BTCUSDT` WebSocket feed
+WHEN a frame with `type = "snapshot"` is received
+THEN the Bybit connector replaces its full L2 book with all levels from that snapshot (up to 50 bids and 50 asks)
+
+GIVEN the same Bybit feed
+WHEN a frame with `type = "delta"` is received
+THEN the connector ignores it — the L2 book is not modified; BBO continues to be updated from the existing channel
+
+GIVEN `GET /api/health` is called after PR2 lands
+WHEN the response JSON is inspected per exchange
+THEN `has_l2` is `true` for `binance`, `bybit`, and `okx`; `has_l2` is `false` for the seven exchanges that do not implement `BookConnector`
+
+**Test strategy**: unit for book parsing and executor fallback logic; integration for aggregator L2 snapshot maintenance and API honesty.
+
+---
+
+### Capability NR1–NR4: No-regression on baseline and backward compatibility
+
+GIVEN the test suite before this change with 184 passing tests
+WHEN all advanced-detection-signals features land
+THEN all 184 pre-existing tests still pass; no existing test is skipped or removed
+
+GIVEN no new external package in `go.mod` was added before this change
+WHEN advanced-detection-signals lands
+THEN no package that was not already vendored has been added
+
+GIVEN `ImbalancePenaltyWeight` is left at its default value of `0.15`
+WHEN the spatial scorer processes an opportunity
+THEN the scoring behavior is consistent with the documented formula; existing fixtures that do not set book sizes explicitly still pass (they use balanced or nil books which yield penalty = 0)
+
+**Test strategy**: `go test ./... -race` baseline comparison; inspection of `go.mod` diff; legacy fixture verification.
+
+---
+
 ### Requirement M10: No regression on existing tests
 
 The refactored codebase MUST pass all 109 tests that existed before this change. The 12 engine tests covering spatial detection, scoring, and fees MUST be migrated to `internal/strategy/spatial/spatial_test.go` and continue to pass there.
