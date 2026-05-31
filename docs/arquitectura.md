@@ -91,38 +91,38 @@ Una única goroutine corre el **processing loop** principal en `cmd/server/main.
 
 ```mermaid
 sequenceDiagram
-    participant Conn as Exchange WS
-    participant Agg as Aggregator
-    participant Loop as Processing Loop
-    participant Eng as Engine ProcessUpdate
-    participant Strats as Strategies x3
-    participant PQ as Priority Queue
-    participant RM as Risk Manager
-    participant Exec as Executor
-    participant Store as SQLite Store
-    participant Hub as WS Hub
-
+    participant Conn
+    participant Agg
+    participant Proc
+    participant Eng
+    participant Strats
+    participant PQ
+    participant RM
+    participant Exec
+    participant Store
+    participant Hub
     Conn->>Agg: PriceUpdate bid ask
-    Agg->>Loop: update via channel
-    Loop->>Eng: ProcessUpdate u
+    Agg->>Proc: update via channel
+    Proc->>Eng: ProcessUpdate u
     Eng->>Strats: Detect u snapshot now
     Strats-->>Eng: Opportunity slice
     Eng->>PQ: heap Push for each opp
-
-    Note over Loop: every EXECUTION_INTERVAL_MS
-    Loop->>Eng: DequeueTop
-    Eng-->>Loop: top opp
-    Loop->>RM: Evaluate opp
+    Note over Proc: every EXECUTION_INTERVAL_MS
+    Proc->>Eng: DequeueTop
+    Eng-->>Proc: top opp
+    Proc->>RM: Evaluate opp
     alt accepted
-        Loop->>Exec: Execute opp
+        Proc->>Exec: Execute opp
         Exec->>Store: SaveTrade
         Exec->>Hub: trade_executed
     else rejected
-        Loop->>Store: opp Status skipped
-        Loop->>Hub: circuit_breaker if paused
+        Proc->>Store: opp Status skipped
+        Proc->>Hub: circuit_breaker if paused
     end
-    Loop->>Hub: opportunity with final status
+    Proc->>Hub: opportunity with final status
 ```
+
+Aliases: Conn = Exchange WS · Agg = Aggregator · Proc = Processing Loop · Eng = Engine.ProcessUpdate · Strats = 3 Strategies · PQ = Priority Queue · RM = Risk Manager · Exec = Executor · Store = SQLite Store · Hub = WS Hub.
 
 #### Componentes del engine
 
