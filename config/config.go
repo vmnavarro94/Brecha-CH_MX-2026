@@ -65,6 +65,14 @@ type Config struct {
 	FundingNotional         float64
 	FundingSeed             int64
 	FundingEmitCooldown     time.Duration
+
+	// Kelly + correlation + adaptive threshold parameters for SpatialStrategy.
+	SpatialBaseMinNetProfitPct float64
+	SpatialAdaptiveCoeff       float64
+	KellyMinSamples            int
+	KellyFraction              float64
+	CorrPenaltyWeight          float64
+	CorrWindowN                int
 }
 
 func Load() *Config {
@@ -116,6 +124,14 @@ func Load() *Config {
 		FundingNotional:         getEnvFloat("FUNDING_NOTIONAL", 1000.0),
 		FundingSeed:             int64(getEnvInt("FUNDING_SEED", 42)),
 		FundingEmitCooldown:     time.Duration(getEnvInt("FUNDING_EMIT_COOLDOWN_MS", 5000)) * time.Millisecond,
+
+		// Kelly + correlation + adaptive threshold (cold-start defaults match pre-change behavior).
+		SpatialBaseMinNetProfitPct: getEnvFloat("SPATIAL_BASE_MIN_NET_PROFIT_PCT", 0.0),
+		SpatialAdaptiveCoeff:       getEnvFloat("SPATIAL_ADAPTIVE_COEFF", 0.5),
+		KellyMinSamples:            getEnvInt("KELLY_MIN_SAMPLES", 10),
+		KellyFraction:              getEnvFloat("KELLY_FRACTION", 0.25),
+		CorrPenaltyWeight:          getEnvFloat("CORR_PENALTY_WEIGHT", 0.3),
+		CorrWindowN:                getEnvInt("CORR_WINDOW_N", 50),
 	}
 }
 

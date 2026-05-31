@@ -132,10 +132,16 @@ func main() {
 	}
 
 	spat := spatial.New(spatial.Config{
-		Fees:               spatFees,
-		MinNetProfitPct:    cfg.MinNetProfitPct,
-		MaxPositionUSDT:    cfg.MaxPositionUSDT,
-		StalenessThreshold: cfg.StalenessThreshold,
+		Fees:                spatFees,
+		MinNetProfitPct:     cfg.MinNetProfitPct,
+		MaxPositionUSDT:     cfg.MaxPositionUSDT,
+		StalenessThreshold:  cfg.StalenessThreshold,
+		BaseMinNetProfitPct: cfg.SpatialBaseMinNetProfitPct,
+		AdaptiveCoeff:       cfg.SpatialAdaptiveCoeff,
+		KellyMinSamples:     cfg.KellyMinSamples,
+		KellyFraction:       cfg.KellyFraction,
+		CorrPenaltyWeight:   cfg.CorrPenaltyWeight,
+		CorrWindowN:         cfg.CorrWindowN,
 	}, spreadModels)
 
 	// --- TriangularStrategy ---
@@ -201,7 +207,7 @@ func main() {
 	// --- Risk Manager ---
 
 	rm := risk.NewRiskManager(risk.Config{
-		MinNetProfitPct:  cfg.MinNetProfitPct,
+		MinNetProfitPct:  cfg.SpatialBaseMinNetProfitPct,
 		MaxPositionUSDT:  cfg.MaxPositionUSDT,
 		LossThreshold:    cfg.CircuitBreakerLossPct,
 		ConsecutiveLossN: cfg.CircuitBreakerN,
@@ -217,7 +223,7 @@ func main() {
 		MaxQtyBTC: cfg.DepthMaxQtyBTC,
 		Rand:      rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
-	exec := executor.NewExecutorWithBookSource(w, st, agg.Snapshot, clk, cfg.StalenessThreshold, depthCfg, agg)
+	exec := executor.NewExecutorWithBookSource(w, st, agg.Snapshot, clk, cfg.StalenessThreshold, depthCfg, agg).WithTradeReturnReporter(spat)
 	fundingExec := executor.NewFundingExecutor(st, clk)
 	triangularExec := executor.NewTriangularExecutor(st, clk, cfg.TriangularTakerFee, cfg.TriangularNotional)
 
@@ -388,10 +394,16 @@ func main() {
 	var factoryBuilder func(spec backtest.BacktestSpec) []backtest.StrategyFactory
 	if rec != nil {
 		spatialCfg := spatial.Config{
-			Fees:               spatFees,
-			MinNetProfitPct:    cfg.MinNetProfitPct,
-			MaxPositionUSDT:    cfg.MaxPositionUSDT,
-			StalenessThreshold: cfg.StalenessThreshold,
+			Fees:                spatFees,
+			MinNetProfitPct:     cfg.MinNetProfitPct,
+			MaxPositionUSDT:     cfg.MaxPositionUSDT,
+			StalenessThreshold:  cfg.StalenessThreshold,
+			BaseMinNetProfitPct: cfg.SpatialBaseMinNetProfitPct,
+			AdaptiveCoeff:       cfg.SpatialAdaptiveCoeff,
+			KellyMinSamples:     cfg.KellyMinSamples,
+			KellyFraction:       cfg.KellyFraction,
+			CorrPenaltyWeight:   cfg.CorrPenaltyWeight,
+			CorrWindowN:         cfg.CorrWindowN,
 		}
 		triCfg := triangular.Config{
 			TakerFee:     cfg.TriangularTakerFee,
