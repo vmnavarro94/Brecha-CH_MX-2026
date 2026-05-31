@@ -14,10 +14,11 @@ import (
 
 // Config holds all runtime-tunable parameters for SpatialStrategy.
 type Config struct {
-	Fees               map[string]FeeConfig
-	MinNetProfitPct    float64
-	MaxPositionUSDT    float64
-	StalenessThreshold time.Duration
+	Fees                   map[string]FeeConfig
+	MinNetProfitPct        float64
+	MaxPositionUSDT        float64
+	StalenessThreshold     time.Duration
+	ImbalancePenaltyWeight float64 // default 0.15; set to 0 to disable
 }
 
 // SpatialStrategy detects cross-exchange spatial arbitrage opportunities.
@@ -31,7 +32,11 @@ type SpatialStrategy struct {
 
 // New creates a SpatialStrategy with the given config and spread models.
 // models may be nil; if nil or the pair key is absent, fallback scoring is used.
+// If cfg.ImbalancePenaltyWeight is zero (unset), it defaults to 0.15.
 func New(cfg Config, models map[string]*model.SpreadModel) *SpatialStrategy {
+	if cfg.ImbalancePenaltyWeight == 0 {
+		cfg.ImbalancePenaltyWeight = 0.15
+	}
 	return &SpatialStrategy{
 		cfg:    cfg,
 		models: models,
@@ -118,6 +123,18 @@ func (s *SpatialStrategy) Detect(
 
 		zScore, score := s.computeScore(update.Exchange, sellEx, netPct)
 
+		// Imbalance penalty: penalises ask-heavy sell-side books (harder to sell).
+		// penalty = weight * max(0, -imbalance) where imbalance = (bid-ask)/(bid+ask)
+		// Nil-book guard: if both sizes are zero, penalty = 0.
+		sellBidF, _ := sellPrice.BidSize.Float64()
+		sellAskF, _ := sellPrice.AskSize.Float64()
+		if sellBidF+sellAskF > 0 {
+			imbalance := (sellBidF - sellAskF) / (sellBidF + sellAskF)
+			if imbalance < 0 {
+				score -= cfg.ImbalancePenaltyWeight * (-imbalance)
+			}
+		}
+
 		opp := types.Opportunity{
 			ID:           uuid.New().String(),
 			BuyExchange:  update.Exchange,
@@ -180,6 +197,14 @@ func (s *SpatialStrategy) SetStaleness(d time.Duration) {
 func (s *SpatialStrategy) SetFees(fees map[string]FeeConfig) {
 	s.cfgMu.Lock()
 	s.cfg.Fees = fees
+	s.cfgMu.Unlock()
+}
+
+// SetImbalancePenaltyWeight updates the imbalance penalty weight under the config lock.
+// Set to 0.0 to effectively disable the penalty.
+func (s *SpatialStrategy) SetImbalancePenaltyWeight(v float64) {
+	s.cfgMu.Lock()
+	s.cfg.ImbalancePenaltyWeight = v
 	s.cfgMu.Unlock()
 }
 

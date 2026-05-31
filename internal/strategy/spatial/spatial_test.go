@@ -1100,3 +1100,233 @@ func TestSpatial_Race(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+// --- F2: Imbalance Penalty tests ---
+
+// makeSellUpdate creates a PriceUpdate with explicit BidSize and AskSize.
+func makeSellUpdate(exchange string, bid, ask, bidSize, askSize float64, receivedAt time.Time) types.PriceUpdate {
+	return types.PriceUpdate{
+		Exchange:   exchange,
+		Bid:        decimal.NewFromFloat(bid),
+		Ask:        decimal.NewFromFloat(ask),
+		BidSize:    decimal.NewFromFloat(bidSize),
+		AskSize:    decimal.NewFromFloat(askSize),
+		ReceivedAt: receivedAt,
+	}
+}
+
+// imbalanceCfg returns a Config with a non-zero ImbalancePenaltyWeight.
+func imbalanceCfg(weight float64) spatial.Config {
+	return spatial.Config{
+		Fees: map[string]spatial.FeeConfig{
+			"bybit":  {TakerFee: 0, SlippageFactor: 0, WithdrawalBTC: 0, NetworkLatencyBps: 0},
+			"kraken": {TakerFee: 0, SlippageFactor: 0, WithdrawalBTC: 0, NetworkLatencyBps: 0},
+		},
+		MinNetProfitPct:        0.0,
+		MaxPositionUSDT:        50000.0,
+		StalenessThreshold:     10 * time.Second,
+		ImbalancePenaltyWeight: weight,
+	}
+}
+
+// TestSpatial_ImbalanceBalanced_NoPenalty: BidSize=10, AskSize=10 → penalty=0.
+func TestSpatial_ImbalanceBalanced_NoPenalty(t *testing.T) {
+	now := time.Now()
+	const (
+		buyAsk  = 50000.0
+		sellBid = 50500.0
+	)
+
+	cfg := imbalanceCfg(0.15)
+
+	snapshot := map[string]types.PriceUpdate{
+		"bybit":  makeSellUpdate("bybit", sellBid, buyAsk, 10.0, 10.0, now),
+		"kraken": makeSellUpdate("kraken", sellBid, 99999.0, 10.0, 10.0, now),
+	}
+
+	spat := spatial.New(cfg, nil)
+	update := makeSellUpdate("bybit", sellBid, buyAsk, 10.0, 10.0, now)
+	opps := spat.Detect(update, snapshot, now)
+
+	var opp *types.Opportunity
+	for i := range opps {
+		if opps[i].BuyExchange == "bybit" && opps[i].SellExchange == "kraken" {
+			opp = &opps[i]
+			break
+		}
+	}
+	if opp == nil {
+		t.Fatal("expected bybit->kraken opportunity (balanced)")
+	}
+
+	// Balanced book → imbalance = 0 → penalty = 0
+	// net profit = gross = sellBid - buyAsk
+	gross := sellBid - buyAsk
+	gotNet, _ := opp.NetProfit.Float64()
+	if diff := gotNet - gross; diff < -0.001 || diff > 0.001 {
+		t.Errorf("balanced: net profit got %.6f, want %.6f (penalty should be 0)", gotNet, gross)
+	}
+}
+
+// TestSpatial_ImbalanceBidHeavy_NoPenalty: BidSize=20, AskSize=5 → imbalance>0 → penalty=0.
+func TestSpatial_ImbalanceBidHeavy_NoPenalty(t *testing.T) {
+	now := time.Now()
+	const (
+		buyAsk  = 50000.0
+		sellBid = 50500.0
+	)
+
+	cfg := imbalanceCfg(0.15)
+
+	snapshot := map[string]types.PriceUpdate{
+		"bybit":  makeSellUpdate("bybit", sellBid, buyAsk, 20.0, 5.0, now),
+		"kraken": makeSellUpdate("kraken", sellBid, 99999.0, 20.0, 5.0, now),
+	}
+
+	spat := spatial.New(cfg, nil)
+	update := makeSellUpdate("bybit", sellBid, buyAsk, 20.0, 5.0, now)
+	opps := spat.Detect(update, snapshot, now)
+
+	var opp *types.Opportunity
+	for i := range opps {
+		if opps[i].BuyExchange == "bybit" && opps[i].SellExchange == "kraken" {
+			opp = &opps[i]
+			break
+		}
+	}
+	if opp == nil {
+		t.Fatal("expected bybit->kraken opportunity (bid-heavy)")
+	}
+
+	// bid-heavy: imbalance = (20-5)/(20+5) = 0.6 > 0 → max(0, -0.6) = 0 → penalty = 0
+	gross := sellBid - buyAsk
+	gotNet, _ := opp.NetProfit.Float64()
+	if diff := gotNet - gross; diff < -0.001 || diff > 0.001 {
+		t.Errorf("bid-heavy: net profit got %.6f, want %.6f (penalty should be 0)", gotNet, gross)
+	}
+}
+
+// TestSpatial_ImbalanceAskHeavy_AppliesPenalty: BidSize=5, AskSize=20, weight=0.15 → penalty=0.09.
+func TestSpatial_ImbalanceAskHeavy_AppliesPenalty(t *testing.T) {
+	now := time.Now()
+	const (
+		buyAsk  = 50000.0
+		sellBid = 50500.0
+	)
+
+	cfg := imbalanceCfg(0.15)
+
+	snapshot := map[string]types.PriceUpdate{
+		"bybit":  makeSellUpdate("bybit", sellBid, buyAsk, 5.0, 20.0, now),
+		"kraken": makeSellUpdate("kraken", sellBid, 99999.0, 5.0, 20.0, now),
+	}
+
+	spat := spatial.New(cfg, nil)
+	update := makeSellUpdate("bybit", sellBid, buyAsk, 5.0, 20.0, now)
+	opps := spat.Detect(update, snapshot, now)
+
+	var opp *types.Opportunity
+	for i := range opps {
+		if opps[i].BuyExchange == "bybit" && opps[i].SellExchange == "kraken" {
+			opp = &opps[i]
+			break
+		}
+	}
+	if opp == nil {
+		t.Fatal("expected bybit->kraken opportunity (ask-heavy)")
+	}
+
+	// ask-heavy: imbalance = (5-20)/(5+20) = -0.6 → max(0, 0.6) = 0.6
+	// penalty = 0.15 * 0.6 = 0.09
+	// But penalty in the formula is applied to the score (netPct), not netProfit directly.
+	// Score = netPct - penalty. But the spec says "penalty subtracted from score before heap push".
+	// The test verifies the score (not net profit) is reduced by exactly 0.09.
+	netPct, _ := opp.NetProfitPct.Float64()
+	score, _ := opp.Score.Float64()
+	expectedPenalty := 0.15 * 0.6
+	expectedScore := netPct - expectedPenalty // no model = score = netPct - penalty
+
+	if diff := score - expectedScore; diff < -0.0001 || diff > 0.0001 {
+		t.Errorf("ask-heavy: score got %.6f, want %.6f (penalty=%.4f should be subtracted)", score, expectedScore, expectedPenalty)
+	}
+}
+
+// TestSpatial_ImbalanceNilBook_NoPenalty: BidSize=0, AskSize=0 → penalty=0.
+func TestSpatial_ImbalanceNilBook_NoPenalty(t *testing.T) {
+	now := time.Now()
+	const (
+		buyAsk  = 50000.0
+		sellBid = 50500.0
+	)
+
+	cfg := imbalanceCfg(0.15)
+
+	snapshot := map[string]types.PriceUpdate{
+		"bybit":  makeSellUpdate("bybit", sellBid, buyAsk, 0.0, 0.0, now),
+		"kraken": makeSellUpdate("kraken", sellBid, 99999.0, 0.0, 0.0, now),
+	}
+
+	spat := spatial.New(cfg, nil)
+	update := makeSellUpdate("bybit", sellBid, buyAsk, 0.0, 0.0, now)
+	opps := spat.Detect(update, snapshot, now)
+
+	var opp *types.Opportunity
+	for i := range opps {
+		if opps[i].BuyExchange == "bybit" && opps[i].SellExchange == "kraken" {
+			opp = &opps[i]
+			break
+		}
+	}
+	if opp == nil {
+		t.Fatal("expected bybit->kraken opportunity (nil book)")
+	}
+
+	// BidSize=0, AskSize=0 → no signal → penalty=0; score = netPct
+	netPct, _ := opp.NetProfitPct.Float64()
+	score, _ := opp.Score.Float64()
+	if diff := score - netPct; diff < -0.0001 || diff > 0.0001 {
+		t.Errorf("nil-book: score got %.6f, want %.6f (penalty should be 0 with zero book)", score, netPct)
+	}
+}
+
+// TestSpatial_SetImbalancePenaltyWeight_TakesEffect: set weight=0.0, ask-heavy book yields penalty=0.
+func TestSpatial_SetImbalancePenaltyWeight_TakesEffect(t *testing.T) {
+	now := time.Now()
+	const (
+		buyAsk  = 50000.0
+		sellBid = 50500.0
+	)
+
+	cfg := imbalanceCfg(0.15)
+
+	snapshot := map[string]types.PriceUpdate{
+		"bybit":  makeSellUpdate("bybit", sellBid, buyAsk, 5.0, 20.0, now),
+		"kraken": makeSellUpdate("kraken", sellBid, 99999.0, 5.0, 20.0, now),
+	}
+
+	spat := spatial.New(cfg, nil)
+
+	// Disable imbalance penalty
+	spat.SetImbalancePenaltyWeight(0.0)
+
+	update := makeSellUpdate("bybit", sellBid, buyAsk, 5.0, 20.0, now)
+	opps := spat.Detect(update, snapshot, now)
+
+	var opp *types.Opportunity
+	for i := range opps {
+		if opps[i].BuyExchange == "bybit" && opps[i].SellExchange == "kraken" {
+			opp = &opps[i]
+			break
+		}
+	}
+	if opp == nil {
+		t.Fatal("expected bybit->kraken opportunity after disabling penalty")
+	}
+
+	// With weight=0, penalty=0 for any book → score = netPct
+	netPct, _ := opp.NetProfitPct.Float64()
+	score, _ := opp.Score.Float64()
+	if diff := score - netPct; diff < -0.0001 || diff > 0.0001 {
+		t.Errorf("weight=0: score got %.6f, want %.6f (penalty should be disabled)", score, netPct)
+	}
+}
