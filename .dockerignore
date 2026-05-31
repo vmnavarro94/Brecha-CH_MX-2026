@@ -1,10 +1,25 @@
 .git
 .github
+.gitignore
 *.md
-web/node_modules
-"Brecha Design System"
-openspec
-.atl
+docs/
+
+# Agent workspaces (not needed in image)
+.claude
 .remember
+.superpowers
+.atl
+openspec
+
+# Design system scratchpad
+"Brecha Design System"
+
+# Frontend
+web/node_modules
+
+# Local build script workspace
+scripts/node_modules
+scripts/tmp-mermaid
+
+# Test source files
 *.test.go
-dist/

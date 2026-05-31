@@ -21,12 +21,6 @@ services:
       - 8.8.8.8
       - 1.1.1.1
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/status"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
 volumes:
   app-data:
