@@ -1,17 +1,36 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/shopspring/decimal"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/backtest"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/model"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/risk"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/store"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
+
+// BacktestRunnerIface is the minimal interface consumed by the REST handlers.
+// *backtest.Runner satisfies it; test fakes can implement it without importing
+// the full runner.
+type BacktestRunnerIface interface {
+	// Run executes a synchronous replay. Returns ErrAlreadyRunning immediately if
+	// another run is in progress.
+	Run(ctx context.Context, spec backtest.BacktestSpec, factories []backtest.StrategyFactory) (backtest.RunResult, error)
+	// StartAsync attempts to acquire the run lock and starts the replay in a
+	// background goroutine. Returns (runID, nil) immediately on success, or
+	// ("", ErrAlreadyRunning) if already running. The completed RunResult is sent
+	// to resultCh (may be nil).
+	StartAsync(ctx context.Context, spec backtest.BacktestSpec, factories []backtest.StrategyFactory, resultCh chan<- backtest.RunResult) (string, error)
+	// Status returns the current run state atomically.
+	Status() backtest.RunStatus
+}
 
 // ExchangeHealth describes the live connection state of a single exchange.
 type ExchangeHealth struct {
@@ -65,20 +84,23 @@ type FeeInfoPatch struct {
 
 // apiHandler holds dependencies for the REST API.
 type apiHandler struct {
-	store         *store.Store
-	risk          *risk.RiskManager
-	spreadsFn     func() map[string]model.SpreadStats
-	getConfigFn   func() ConfigSnapshot
-	patchConfigFn func(ConfigPatch) ConfigSnapshot
-	healthFn      func() map[string]ExchangeHealth
-	allowedOrigin string
-	exchangeCount int
-	mux           *http.ServeMux
+	store            *store.Store
+	risk             *risk.RiskManager
+	spreadsFn        func() map[string]model.SpreadStats
+	getConfigFn      func() ConfigSnapshot
+	patchConfigFn    func(ConfigPatch) ConfigSnapshot
+	healthFn         func() map[string]ExchangeHealth
+	allowedOrigin    string
+	exchangeCount    int
+	mux              *http.ServeMux
+	backtestRunner   BacktestRunnerIface
+	recordingEnabled *atomic.Bool
 }
 
 // NewAPIHandler creates an http.Handler that serves all /api/* routes.
 // spreadsFn supplies per-pair spread statistics; healthFn supplies per-exchange
 // connection state (nil disables /api/health).
+// runner and recordingEnabled are optional (pass nil to disable backtest endpoints).
 func NewAPIHandler(
 	st *store.Store,
 	rm *risk.RiskManager,
@@ -88,17 +110,21 @@ func NewAPIHandler(
 	healthFn func() map[string]ExchangeHealth,
 	allowedOrigin string,
 	exchangeCount int,
+	runner BacktestRunnerIface,
+	recordingEnabled *atomic.Bool,
 ) http.Handler {
 	h := &apiHandler{
-		store:         st,
-		risk:          rm,
-		spreadsFn:     spreadsFn,
-		getConfigFn:   getConfigFn,
-		patchConfigFn: patchConfigFn,
-		healthFn:      healthFn,
-		allowedOrigin: allowedOrigin,
-		exchangeCount: exchangeCount,
-		mux:           http.NewServeMux(),
+		store:            st,
+		risk:             rm,
+		spreadsFn:        spreadsFn,
+		getConfigFn:      getConfigFn,
+		patchConfigFn:    patchConfigFn,
+		healthFn:         healthFn,
+		allowedOrigin:    allowedOrigin,
+		exchangeCount:    exchangeCount,
+		mux:              http.NewServeMux(),
+		backtestRunner:   runner,
+		recordingEnabled: recordingEnabled,
 	}
 	h.mux.HandleFunc("/api/status", h.handleStatus)
 	h.mux.HandleFunc("/api/trades", h.handleTrades)
@@ -109,6 +135,11 @@ func NewAPIHandler(
 	h.mux.HandleFunc("/api/health", h.handleHealth)
 	h.mux.HandleFunc("/api/pnl-by-pair", h.handlePnLByPair)
 	h.mux.HandleFunc("/api/pnl-by-strategy", h.handlePnLByStrategy)
+	h.mux.HandleFunc("/api/backtest/start", h.handleBacktestStart)
+	h.mux.HandleFunc("/api/backtest/status", h.handleBacktestStatus)
+	h.mux.HandleFunc("/api/backtest/runs", h.handleBacktestRuns)
+	h.mux.HandleFunc("/api/backtest/results/", h.handleBacktestResults)
+	h.mux.HandleFunc("/api/backtest/recording", h.handleBacktestRecording)
 	return h
 }
 

@@ -46,6 +46,7 @@ func newAPI(t *testing.T, st *store.Store, rm *risk.RiskManager, spreadsFn func(
 		func(server.ConfigPatch) server.ConfigSnapshot { return noop },
 		nil,
 		"http://localhost:3000", 3,
+		nil, nil,
 	)
 }
 
@@ -64,6 +65,7 @@ func newAPIWithConfigFn(
 		patchCfg,
 		nil,
 		"http://localhost:3000", 3,
+		nil, nil,
 	)
 }
 
@@ -352,6 +354,7 @@ func TestAPIHealth_PerExchange(t *testing.T) {
 		func(server.ConfigPatch) server.ConfigSnapshot { return noop },
 		healthFn,
 		"http://localhost:3000", 3,
+		nil, nil,
 	)
 
 	resp, body := getJSON(t, handler, "/api/health")

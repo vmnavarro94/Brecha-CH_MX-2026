@@ -66,6 +66,40 @@ func (r *Runner) Status() RunStatus {
 	return *r.status.Load()
 }
 
+// StartAsync attempts to start a backtest replay in a background goroutine.
+// Returns the runID and nil immediately if the lock was acquired, or "" and
+// ErrAlreadyRunning if another run is in progress.
+// The result (metrics, error) is written to resultCh when the replay finishes.
+func (r *Runner) StartAsync(
+	ctx context.Context,
+	spec BacktestSpec,
+	factories []StrategyFactory,
+	resultCh chan<- RunResult,
+) (string, error) {
+	if !r.mu.TryLock() {
+		return "", ErrAlreadyRunning
+	}
+
+	runID := uuid.New().String()
+	r.status.Store(&RunStatus{State: "running", RunID: runID})
+
+	go func() {
+		defer r.mu.Unlock()
+		result, err := r.runLocked(ctx, runID, spec, factories)
+		if resultCh != nil {
+			select {
+			case resultCh <- result:
+			default:
+			}
+		}
+		if err != nil {
+			r.status.Store(&RunStatus{State: "idle"})
+		}
+	}()
+
+	return runID, nil
+}
+
 // Run executes a full replay against the recorded frames. Returns ErrAlreadyRunning
 // if a run is already in progress. Each call produces a fresh set of strategy
 // instances via the provided factories.
@@ -78,6 +112,11 @@ func (r *Runner) Run(ctx context.Context, spec BacktestSpec, factories []Strateg
 	runID := uuid.New().String()
 	r.status.Store(&RunStatus{State: "running", RunID: runID})
 
+	return r.runLocked(ctx, runID, spec, factories)
+}
+
+// runLocked executes the full replay. MUST be called with r.mu already held.
+func (r *Runner) runLocked(ctx context.Context, runID string, spec BacktestSpec, factories []StrategyFactory) (RunResult, error) {
 	startedAt := time.Now()
 
 	// Load frames and funding rates for the replay window.

@@ -351,7 +351,7 @@ func main() {
 
 	// --- HTTP server ---
 
-	apiHandler := server.NewAPIHandler(st, rm, func() map[string]model.SpreadStats { return spat.SpreadStats() }, getConfigFn, patchConfigFn, healthFn, cfg.AllowedOrigin, len(exchangeNames))
+	apiHandler := server.NewAPIHandler(st, rm, func() map[string]model.SpreadStats { return spat.SpreadStats() }, getConfigFn, patchConfigFn, healthFn, cfg.AllowedOrigin, len(exchangeNames), nil, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)
