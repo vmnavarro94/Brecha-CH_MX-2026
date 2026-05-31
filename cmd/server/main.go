@@ -22,6 +22,7 @@ import (
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/exchange"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/executor"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/feed"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/metrics"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/model"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/recorder"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/risk"
@@ -75,17 +76,23 @@ func main() {
 
 	// --- Exchange connectors ---
 
+	// Per-exchange WS parse latency trackers (keyed by exchange name).
+	parseTrackers := map[string]*metrics.LatencyTracker{}
+	for _, ex := range exchangeNames {
+		parseTrackers[ex] = &metrics.LatencyTracker{}
+	}
+
 	connectors := []exchange.Connector{
-		exchange.NewBinance(cfg.BinanceWSURL),
-		exchange.NewKraken(cfg.KrakenWSURL),
-		exchange.NewBybit(cfg.BybitWSURL),
-		exchange.NewOKX(cfg.OKXWSURL),
-		exchange.NewGate(cfg.GateWSURL),
-		exchange.NewMEXC(cfg.MEXCWSURL),
-		exchange.NewBitget(cfg.BitgetWSURL),
-		exchange.NewHTX(cfg.HTXWSURL),
-		exchange.NewCryptoCom(cfg.CryptoComWSURL),
-		exchange.NewKuCoin(cfg.KuCoinAPIURL),
+		exchange.NewBinance(cfg.BinanceWSURL, parseTrackers["binance"]),
+		exchange.NewKraken(cfg.KrakenWSURL, parseTrackers["kraken"]),
+		exchange.NewBybit(cfg.BybitWSURL, parseTrackers["bybit"]),
+		exchange.NewOKX(cfg.OKXWSURL, parseTrackers["okx"]),
+		exchange.NewGate(cfg.GateWSURL, parseTrackers["gate"]),
+		exchange.NewMEXC(cfg.MEXCWSURL, parseTrackers["mexc"]),
+		exchange.NewBitget(cfg.BitgetWSURL, parseTrackers["bitget"]),
+		exchange.NewHTX(cfg.HTXWSURL, parseTrackers["htx"]),
+		exchange.NewCryptoCom(cfg.CryptoComWSURL, parseTrackers["cryptocom"]),
+		exchange.NewKuCoin(cfg.KuCoinAPIURL, parseTrackers["kucoin"]),
 	}
 
 	agg := feed.NewAggregator(connectors)
@@ -359,6 +366,13 @@ func main() {
 				h.LastUpdateAt = p.ReceivedAt.UTC().Format(time.RFC3339)
 				h.LastUpdateAgeMs = age.Milliseconds()
 				h.Fresh = age < 10*time.Second
+			}
+			if t, exists := parseTrackers[ex]; exists {
+				p50, p99, samples := t.Stats()
+				if samples >= 10 {
+					h.ParseLatencyP50Us = p50.Nanoseconds() / 1000
+					h.ParseLatencyP99Us = p99.Nanoseconds() / 1000
+				}
 			}
 			out[ex] = h
 		}
