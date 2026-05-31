@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/metrics"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
@@ -31,7 +32,7 @@ type Engine struct {
 	clock      types.Clock
 	cfg        Config
 	pq         oppHeap
-	latency    *LatencyTracker
+	latency    *metrics.LatencyTracker
 	processed  atomic.Uint64
 }
 
@@ -51,7 +52,7 @@ func NewEngine(
 		clock:      clock,
 		cfg:        cfg,
 		pq:         h,
-		latency:    &LatencyTracker{},
+		latency:    &metrics.LatencyTracker{},
 	}
 }
 

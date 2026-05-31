@@ -1,4 +1,4 @@
-package engine
+package metrics
 
 import (
 	"math"
@@ -9,8 +9,8 @@ import (
 
 const latencyRingSize = 1024
 
-// LatencyTracker records the elapsed time of ProcessUpdate calls in a fixed-size
-// ring buffer and computes p50/p99 percentiles on demand.
+// LatencyTracker records elapsed durations in a fixed-size ring buffer and
+// computes p50/p99 percentiles on demand. Safe for concurrent use.
 type LatencyTracker struct {
 	mu    sync.RWMutex
 	ring  [latencyRingSize]int64 // nanoseconds
