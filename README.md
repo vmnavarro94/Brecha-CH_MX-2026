@@ -212,20 +212,20 @@ In demo mode, the TweaksPanel in the dashboard lets you edit any fee field live 
 
 ## Exchanges, fees and channels
 
-Demo-mode fees are tuned so partial fills and z-score signals stay visible during a demo. Real retail fees are the second column.
+Demo mode mirrors real retail fees so the dashboard reflects honest pricing from boot. Tweak any cell live via the TweaksPanel or `PATCH /api/config` to explore lower-fee scenarios.
 
-| Exchange | Demo fee | Real fee | Withdrawal | Net-lat (bps) | WebSocket channel |
-|----------|---------:|---------:|-----------:|--------------:|-------------------|
-| Binance | 0.001 % | 0.10 % | 0.00020 BTC | 1 | `btcusdt@bookTicker` |
-| Kraken | 0.001 % | 0.26 % | 0.00005 BTC | 2 | v1 ticker array (XBT/USDT) |
-| Bybit | 0.001 % | 0.10 % | 0.00050 BTC | 2 | `orderbook.1.BTCUSDT` |
-| OKX | 0.001 % | 0.10 % | 0.00040 BTC | 2 | `tickers BTC-USDT` |
-| Gate.io | 0.001 % | 0.20 % | 0.00050 BTC | 3 | `spot.book_ticker BTC_USDT` |
-| MEXC | 0.001 % | 0.20 % | 0.00050 BTC | 3 | `spot@public.bookTicker.v3.api@BTCUSDT` |
-| Bitget | 0.001 % | 0.10 % | 0.00030 BTC | 2 | `books1 BTCUSDT_SPBL` |
-| HTX | 0.001 % | 0.20 % | 0.00010 BTC | 3 | `market.btcusdt.bbo` (gzip) |
-| Crypto.com | 0.001 % | 0.25 % | 0.00006 BTC | 2 | `ticker.BTC_USDT` |
-| KuCoin | 0.001 % | 0.10 % | 0.00050 BTC | 3 | `/market/ticker:BTC-USDT` |
+| Exchange | Taker fee | Withdrawal | Net-lat (bps) | WebSocket channel |
+|----------|----------:|-----------:|--------------:|-------------------|
+| Binance | 0.10 % | 0.00020 BTC | 1 | `btcusdt@bookTicker` + `depth20@100ms` |
+| Kraken | 0.26 % | 0.00005 BTC | 2 | v1 ticker array (XBT/USDT) |
+| Bybit | 0.10 % | 0.00050 BTC | 2 | `orderbook.50.BTCUSDT` |
+| OKX | 0.10 % | 0.00040 BTC | 2 | `tickers` + `books5:BTC-USDT` |
+| Gate.io | 0.20 % | 0.00050 BTC | 3 | `spot.book_ticker BTC_USDT` |
+| MEXC | 0.20 % | 0.00050 BTC | 3 | `spot@public.bookTicker.v3.api@BTCUSDT` |
+| Bitget | 0.10 % | 0.00030 BTC | 2 | `books1 BTCUSDT_SPBL` |
+| HTX | 0.20 % | 0.00010 BTC | 3 | `market.btcusdt.bbo` (gzip) |
+| Crypto.com | 0.25 % | 0.00006 BTC | 2 | `ticker.BTC_USDT` |
+| KuCoin | 0.10 % | 0.00050 BTC | 3 | `/market/ticker:BTC-USDT` |
 
 The connector layer normalises 10 different message shapes into a single `types.PriceUpdate`. Each parser is extracted to a testable `parseMessage(msg) (PriceUpdate, bool)` method covered by sample-frame unit tests. Reconnects use exponential backoff capped at 60 seconds.
 
