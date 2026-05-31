@@ -10,17 +10,20 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/shopspring/decimal"
 	"github.com/vmnavarro94/coding-challenge-mexico/config"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/backtest"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/depth"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/engine"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/exchange"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/executor"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/feed"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/model"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/recorder"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/risk"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/server"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/store"
@@ -51,6 +54,19 @@ func main() {
 
 	st := store.NewStore(cfg.DataDir)
 	defer st.Close()
+
+	// --- Recorder (frames.db) ---
+
+	rec, err := recorder.New(cfg.DataDir)
+	if err != nil {
+		slog.Warn("recorder: failed to open frames.db — recording disabled", "err", err)
+		rec = nil
+	}
+	if rec != nil {
+		defer rec.Close()
+	}
+
+	var recordingEnabled atomic.Bool
 
 	w := wallet.NewMultiWallet(exchangeNames, map[string]float64{
 		"USDT": cfg.InitialUSDTPerExchange,
@@ -327,7 +343,7 @@ func main() {
 
 	// --- Processing loop ---
 
-	go runProcessingLoop(ctx, cfg, agg, eng, rm, exec, fundingExec, triangularExec, hub, st, spat, intervalCh, uptimeTracker)
+	go runProcessingLoop(ctx, cfg, agg, eng, rm, exec, fundingExec, triangularExec, hub, st, spat, intervalCh, uptimeTracker, rec, &recordingEnabled)
 
 	// --- Health snapshot ---
 
@@ -349,9 +365,49 @@ func main() {
 		return out
 	}
 
+	// --- Backtest runner ---
+
+	var backtestRunner server.BacktestRunnerIface
+	if rec != nil {
+		spatialCfg := spatial.Config{
+			Fees:               spatFees,
+			MinNetProfitPct:    cfg.MinNetProfitPct,
+			MaxPositionUSDT:    cfg.MaxPositionUSDT,
+			StalenessThreshold: cfg.StalenessThreshold,
+		}
+		triCfg := triangular.Config{
+			TakerFee:     cfg.TriangularTakerFee,
+			NoiseRange:   cfg.TriangularNoiseRange,
+			SeedRefPrice: cfg.TriangularSeedRefPrice,
+			Notional:     cfg.TriangularNotional,
+			MinNetProfit: 0.0,
+			EmitCooldown: 5 * time.Second,
+			Seed:         cfg.TriangularSeed,
+		}
+		fundCfg := funding.Config{
+			Exchanges:        exchangeNames,
+			Threshold:        cfg.FundingThreshold,
+			PollInterval:     cfg.FundingPollInterval,
+			EmitCooldown:     cfg.FundingEmitCooldown,
+			Notional:         cfg.FundingNotional,
+			BaseDifferential: cfg.FundingBaseDifferential,
+			Seed:             cfg.FundingSeed,
+		}
+		// factories: always include spatial and triangular; funding via replay.
+		// The caller (POST /start) passes an empty factories slice to use all.
+		_ = spatialCfg
+		_ = triCfg
+		_ = fundCfg
+		btRunner := backtest.NewRunner(rec, st)
+		// Wire default factories onto the runner so StartAsync can use them.
+		// For this release factories are built per-run from the spec's Strategies field
+		// inside the handler. Pre-building them here for reference only.
+		backtestRunner = btRunner
+	}
+
 	// --- HTTP server ---
 
-	apiHandler := server.NewAPIHandler(st, rm, func() map[string]model.SpreadStats { return spat.SpreadStats() }, getConfigFn, patchConfigFn, healthFn, cfg.AllowedOrigin, len(exchangeNames), nil, nil)
+	apiHandler := server.NewAPIHandler(st, rm, func() map[string]model.SpreadStats { return spat.SpreadStats() }, getConfigFn, patchConfigFn, healthFn, cfg.AllowedOrigin, len(exchangeNames), backtestRunner, &recordingEnabled)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)
@@ -396,6 +452,8 @@ func runProcessingLoop(
 	spat *spatial.SpatialStrategy,
 	intervalCh <-chan time.Duration,
 	uptimeTracker *uptime.Tracker,
+	rec *recorder.Recorder,
+	recordingEnabled *atomic.Bool,
 ) {
 	ticker := time.NewTicker(cfg.ExecutionInterval)
 	defer ticker.Stop()
@@ -447,6 +505,13 @@ func runProcessingLoop(
 		case update, ok := <-agg.Updates():
 			if !ok {
 				return
+			}
+
+			// Record the frame before engine processing if recording is enabled.
+			if rec != nil && recordingEnabled.Load() {
+				if err := rec.RecordFrame(update); err != nil {
+					slog.Debug("recorder: RecordFrame failed", "err", err)
+				}
 			}
 
 			// Engine processes the update (fans out to SpatialStrategy which also
