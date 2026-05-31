@@ -8,20 +8,23 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/shopspring/decimal"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/metrics"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
 type Bybit struct {
-	wsURL  string
-	ch     chan types.PriceUpdate
-	logger *slog.Logger
+	wsURL   string
+	ch      chan types.PriceUpdate
+	logger  *slog.Logger
+	tracker *metrics.LatencyTracker
 }
 
-func NewBybit(wsURL string) *Bybit {
+func NewBybit(wsURL string, tracker *metrics.LatencyTracker) *Bybit {
 	return &Bybit{
-		wsURL:  wsURL,
-		ch:     make(chan types.PriceUpdate, 512),
-		logger: slog.Default().With("exchange", "bybit"),
+		wsURL:   wsURL,
+		ch:      make(chan types.PriceUpdate, 512),
+		logger:  slog.Default().With("exchange", "bybit"),
+		tracker: tracker,
 	}
 }
 
@@ -95,9 +98,13 @@ func (b *Bybit) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		t0 := time.Now()
 		pu, ok := b.parseMessage(msg)
 		if !ok {
 			continue
+		}
+		if b.tracker != nil {
+			b.tracker.Record(time.Since(t0))
 		}
 		select {
 		case b.ch <- pu:

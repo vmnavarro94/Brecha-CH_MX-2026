@@ -8,20 +8,23 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/shopspring/decimal"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/metrics"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
 type OKX struct {
-	wsURL  string
-	ch     chan types.PriceUpdate
-	logger *slog.Logger
+	wsURL   string
+	ch      chan types.PriceUpdate
+	logger  *slog.Logger
+	tracker *metrics.LatencyTracker
 }
 
-func NewOKX(wsURL string) *OKX {
+func NewOKX(wsURL string, tracker *metrics.LatencyTracker) *OKX {
 	return &OKX{
-		wsURL:  wsURL,
-		ch:     make(chan types.PriceUpdate, 512),
-		logger: slog.Default().With("exchange", "okx"),
+		wsURL:   wsURL,
+		ch:      make(chan types.PriceUpdate, 512),
+		logger:  slog.Default().With("exchange", "okx"),
+		tracker: tracker,
 	}
 }
 
@@ -98,9 +101,13 @@ func (o *OKX) run(ctx context.Context) error {
 		if string(msg) == "pong" {
 			continue
 		}
+		t0 := time.Now()
 		pu, ok := o.parseMessage(msg)
 		if !ok {
 			continue
+		}
+		if o.tracker != nil {
+			o.tracker.Record(time.Since(t0))
 		}
 		select {
 		case o.ch <- pu:

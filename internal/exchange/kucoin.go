@@ -12,20 +12,23 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/shopspring/decimal"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/metrics"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
 type KuCoin struct {
-	apiURL string
-	ch     chan types.PriceUpdate
-	logger *slog.Logger
+	apiURL  string
+	ch      chan types.PriceUpdate
+	logger  *slog.Logger
+	tracker *metrics.LatencyTracker
 }
 
-func NewKuCoin(apiURL string) *KuCoin {
+func NewKuCoin(apiURL string, tracker *metrics.LatencyTracker) *KuCoin {
 	return &KuCoin{
-		apiURL: apiURL,
-		ch:     make(chan types.PriceUpdate, 512),
-		logger: slog.Default().With("exchange", "kucoin"),
+		apiURL:  apiURL,
+		ch:      make(chan types.PriceUpdate, 512),
+		logger:  slog.Default().With("exchange", "kucoin"),
+		tracker: tracker,
 	}
 }
 
@@ -158,9 +161,13 @@ func (k *KuCoin) run(ctx context.Context) error {
 			return err
 		}
 
+		t0 := time.Now()
 		pu, ok := k.parseMessage(msg)
 		if !ok {
 			continue
+		}
+		if k.tracker != nil {
+			k.tracker.Record(time.Since(t0))
 		}
 		select {
 		case k.ch <- pu:

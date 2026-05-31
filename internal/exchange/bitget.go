@@ -8,20 +8,23 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/shopspring/decimal"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/metrics"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
 type Bitget struct {
-	wsURL  string
-	ch     chan types.PriceUpdate
-	logger *slog.Logger
+	wsURL   string
+	ch      chan types.PriceUpdate
+	logger  *slog.Logger
+	tracker *metrics.LatencyTracker
 }
 
-func NewBitget(wsURL string) *Bitget {
+func NewBitget(wsURL string, tracker *metrics.LatencyTracker) *Bitget {
 	return &Bitget{
-		wsURL:  wsURL,
-		ch:     make(chan types.PriceUpdate, 512),
-		logger: slog.Default().With("exchange", "bitget"),
+		wsURL:   wsURL,
+		ch:      make(chan types.PriceUpdate, 512),
+		logger:  slog.Default().With("exchange", "bitget"),
+		tracker: tracker,
 	}
 }
 
@@ -101,9 +104,13 @@ func (b *Bitget) run(ctx context.Context) error {
 			continue
 		}
 
+		t0 := time.Now()
 		pu, ok := b.parseMessage(msg)
 		if !ok {
 			continue
+		}
+		if b.tracker != nil {
+			b.tracker.Record(time.Since(t0))
 		}
 		select {
 		case b.ch <- pu:

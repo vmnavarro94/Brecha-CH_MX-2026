@@ -8,20 +8,23 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/shopspring/decimal"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/metrics"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
 type Gate struct {
-	wsURL  string
-	ch     chan types.PriceUpdate
-	logger *slog.Logger
+	wsURL   string
+	ch      chan types.PriceUpdate
+	logger  *slog.Logger
+	tracker *metrics.LatencyTracker
 }
 
-func NewGate(wsURL string) *Gate {
+func NewGate(wsURL string, tracker *metrics.LatencyTracker) *Gate {
 	return &Gate{
-		wsURL:  wsURL,
-		ch:     make(chan types.PriceUpdate, 512),
-		logger: slog.Default().With("exchange", "gate"),
+		wsURL:   wsURL,
+		ch:      make(chan types.PriceUpdate, 512),
+		logger:  slog.Default().With("exchange", "gate"),
+		tracker: tracker,
 	}
 }
 
@@ -100,9 +103,13 @@ func (g *Gate) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		t0 := time.Now()
 		pu, ok := g.parseMessage(msg)
 		if !ok {
 			continue
+		}
+		if g.tracker != nil {
+			g.tracker.Record(time.Since(t0))
 		}
 		select {
 		case g.ch <- pu:

@@ -8,20 +8,23 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/shopspring/decimal"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/metrics"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
 type Binance struct {
-	wsURL  string
-	ch     chan types.PriceUpdate
-	logger *slog.Logger
+	wsURL   string
+	ch      chan types.PriceUpdate
+	logger  *slog.Logger
+	tracker *metrics.LatencyTracker
 }
 
-func NewBinance(wsURL string) *Binance {
+func NewBinance(wsURL string, tracker *metrics.LatencyTracker) *Binance {
 	return &Binance{
-		wsURL:  wsURL + "/ws/btcusdt@bookTicker",
-		ch:     make(chan types.PriceUpdate, 512),
-		logger: slog.Default().With("exchange", "binance"),
+		wsURL:   wsURL + "/ws/btcusdt@bookTicker",
+		ch:      make(chan types.PriceUpdate, 512),
+		logger:  slog.Default().With("exchange", "binance"),
+		tracker: tracker,
 	}
 }
 
@@ -74,9 +77,13 @@ func (b *Binance) run(ctx context.Context) error {
 			return err
 		}
 
+		t0 := time.Now()
 		pu, ok := b.parseMessage(msg)
 		if !ok {
 			continue
+		}
+		if b.tracker != nil {
+			b.tracker.Record(time.Since(t0))
 		}
 
 		select {

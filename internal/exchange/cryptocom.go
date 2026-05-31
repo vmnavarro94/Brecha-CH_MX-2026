@@ -8,20 +8,23 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/shopspring/decimal"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/metrics"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
 type CryptoCom struct {
-	wsURL  string
-	ch     chan types.PriceUpdate
-	logger *slog.Logger
+	wsURL   string
+	ch      chan types.PriceUpdate
+	logger  *slog.Logger
+	tracker *metrics.LatencyTracker
 }
 
-func NewCryptoCom(wsURL string) *CryptoCom {
+func NewCryptoCom(wsURL string, tracker *metrics.LatencyTracker) *CryptoCom {
 	return &CryptoCom{
-		wsURL:  wsURL,
-		ch:     make(chan types.PriceUpdate, 512),
-		logger: slog.Default().With("exchange", "cryptocom"),
+		wsURL:   wsURL,
+		ch:      make(chan types.PriceUpdate, 512),
+		logger:  slog.Default().With("exchange", "cryptocom"),
+		tracker: tracker,
 	}
 }
 
@@ -107,9 +110,13 @@ func (c *CryptoCom) run(ctx context.Context) error {
 			continue
 		}
 
+		t0 := time.Now()
 		pu, ok := c.parseMessage(msg)
 		if !ok {
 			continue
+		}
+		if c.tracker != nil {
+			c.tracker.Record(time.Since(t0))
 		}
 		select {
 		case c.ch <- pu:

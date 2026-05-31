@@ -8,20 +8,23 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/shopspring/decimal"
+	"github.com/vmnavarro94/coding-challenge-mexico/internal/metrics"
 	"github.com/vmnavarro94/coding-challenge-mexico/internal/types"
 )
 
 type MEXC struct {
-	wsURL  string
-	ch     chan types.PriceUpdate
-	logger *slog.Logger
+	wsURL   string
+	ch      chan types.PriceUpdate
+	logger  *slog.Logger
+	tracker *metrics.LatencyTracker
 }
 
-func NewMEXC(wsURL string) *MEXC {
+func NewMEXC(wsURL string, tracker *metrics.LatencyTracker) *MEXC {
 	return &MEXC{
-		wsURL:  wsURL,
-		ch:     make(chan types.PriceUpdate, 512),
-		logger: slog.Default().With("exchange", "mexc"),
+		wsURL:   wsURL,
+		ch:      make(chan types.PriceUpdate, 512),
+		logger:  slog.Default().With("exchange", "mexc"),
+		tracker: tracker,
 	}
 }
 
@@ -112,9 +115,13 @@ func (m *MEXC) run(ctx context.Context) error {
 			continue
 		}
 
+		t0 := time.Now()
 		pu, ok := m.parseMessage(msg)
 		if !ok {
 			continue
+		}
+		if m.tracker != nil {
+			m.tracker.Record(time.Since(t0))
 		}
 		select {
 		case m.ch <- pu:

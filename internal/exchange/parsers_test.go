@@ -6,7 +6,7 @@ import (
 
 // TestBinanceParseMessage verifies the @bookTicker frame parse.
 func TestBinanceParseMessage(t *testing.T) {
-	b := NewBinance("ws://test")
+	b := NewBinance("ws://test", nil)
 	msg := []byte(`{"u":400900217,"s":"BTCUSDT","b":"73000.50","B":"1.234","a":"73001.20","A":"2.345"}`)
 	pu, ok := b.parseMessage(msg)
 	if !ok {
@@ -27,7 +27,7 @@ func TestBinanceParseMessage(t *testing.T) {
 }
 
 func TestBinanceParseMessage_Garbage(t *testing.T) {
-	b := NewBinance("ws://test")
+	b := NewBinance("ws://test", nil)
 	if _, ok := b.parseMessage([]byte(`not json`)); ok {
 		t.Error("parseMessage should reject non-JSON")
 	}
@@ -38,7 +38,7 @@ func TestBinanceParseMessage_Garbage(t *testing.T) {
 
 // TestBybitParseMessage verifies the orderbook.1 frame parse.
 func TestBybitParseMessage(t *testing.T) {
-	by := NewBybit("ws://test")
+	by := NewBybit("ws://test", nil)
 	msg := []byte(`{
 		"topic":"orderbook.1.BTCUSDT",
 		"type":"snapshot",
@@ -64,7 +64,7 @@ func TestBybitParseMessage(t *testing.T) {
 }
 
 func TestBybitParseMessage_Empty(t *testing.T) {
-	by := NewBybit("ws://test")
+	by := NewBybit("ws://test", nil)
 	if _, ok := by.parseMessage([]byte(`{"topic":"orderbook.1.BTCUSDT","data":{"b":[],"a":[]}}`)); ok {
 		t.Error("parseMessage should reject frame with no bids or asks")
 	}
@@ -72,7 +72,7 @@ func TestBybitParseMessage_Empty(t *testing.T) {
 
 // TestOKXParseMessage verifies the tickers frame parse.
 func TestOKXParseMessage(t *testing.T) {
-	o := NewOKX("ws://test")
+	o := NewOKX("ws://test", nil)
 	msg := []byte(`{
 		"arg":{"channel":"tickers","instId":"BTC-USDT"},
 		"data":[{
@@ -99,7 +99,7 @@ func TestOKXParseMessage(t *testing.T) {
 }
 
 func TestOKXParseMessage_SubscribeAck(t *testing.T) {
-	o := NewOKX("ws://test")
+	o := NewOKX("ws://test", nil)
 	if _, ok := o.parseMessage([]byte(`{"event":"subscribe","arg":{"channel":"tickers"}}`)); ok {
 		t.Error("parseMessage should ignore subscribe-ack events")
 	}
@@ -109,7 +109,7 @@ func TestOKXParseMessage_SubscribeAck(t *testing.T) {
 // Format: [channelID, {ticker}, "ticker", "XBT/USDT"]
 // ticker.b = [price, wholeLotVolume, lotVolume]
 func TestKrakenParseMessage(t *testing.T) {
-	k := NewKraken("ws://test")
+	k := NewKraken("ws://test", nil)
 	msg := []byte(`[123,{"b":["73015.30","1","0.8"],"a":["73016.10","2","1.5"]},"ticker","XBT/USDT"]`)
 	pu, ok := k.parseMessage(msg)
 	if !ok {
@@ -127,7 +127,7 @@ func TestKrakenParseMessage(t *testing.T) {
 }
 
 func TestKrakenParseMessage_Heartbeat(t *testing.T) {
-	k := NewKraken("ws://test")
+	k := NewKraken("ws://test", nil)
 	if _, ok := k.parseMessage([]byte(`{"event":"heartbeat"}`)); ok {
 		t.Error("parseMessage should ignore non-array (event) frames")
 	}
@@ -135,7 +135,7 @@ func TestKrakenParseMessage_Heartbeat(t *testing.T) {
 
 // TestGateParseMessage verifies Gate.io spot.book_ticker frame parse.
 func TestGateParseMessage(t *testing.T) {
-	g := NewGate("ws://test")
+	g := NewGate("ws://test", nil)
 	msg := []byte(`{"channel":"spot.book_ticker","event":"update","result":{"b":"73008.50","B":"0.5","a":"73009.10","A":"0.6"}}`)
 	pu, ok := g.parseMessage(msg)
 	if !ok {
@@ -147,7 +147,7 @@ func TestGateParseMessage(t *testing.T) {
 }
 
 func TestGateParseMessage_WrongChannel(t *testing.T) {
-	g := NewGate("ws://test")
+	g := NewGate("ws://test", nil)
 	if _, ok := g.parseMessage([]byte(`{"channel":"spot.trades","event":"update"}`)); ok {
 		t.Error("parseMessage should reject non book_ticker channel")
 	}
@@ -155,7 +155,7 @@ func TestGateParseMessage_WrongChannel(t *testing.T) {
 
 // TestMEXCParseMessage verifies MEXC bookTicker v3 frame parse.
 func TestMEXCParseMessage(t *testing.T) {
-	m := NewMEXC("ws://test")
+	m := NewMEXC("ws://test", nil)
 	msg := []byte(`{"c":"spot@public.bookTicker.v3.api@BTCUSDT","d":{"b":"73005.00","B":"0.1","a":"73005.50","A":"0.2"}}`)
 	pu, ok := m.parseMessage(msg)
 	if !ok {
@@ -167,7 +167,7 @@ func TestMEXCParseMessage(t *testing.T) {
 }
 
 func TestMEXCParseMessage_Ping(t *testing.T) {
-	m := NewMEXC("ws://test")
+	m := NewMEXC("ws://test", nil)
 	if _, ok := m.parseMessage([]byte(`{"msg":"PING"}`)); ok {
 		t.Error("parseMessage should not produce a PriceUpdate from a PING frame")
 	}
@@ -175,7 +175,7 @@ func TestMEXCParseMessage_Ping(t *testing.T) {
 
 // TestBitgetParseMessage verifies Bitget books1 snapshot parse.
 func TestBitgetParseMessage(t *testing.T) {
-	b := NewBitget("ws://test")
+	b := NewBitget("ws://test", nil)
 	msg := []byte(`{"action":"snapshot","arg":{"channel":"books1"},"data":[{"asks":[["73020.00","0.4"]],"bids":[["73019.50","0.3"]],"ts":"123"}]}`)
 	pu, ok := b.parseMessage(msg)
 	if !ok {
@@ -187,7 +187,7 @@ func TestBitgetParseMessage(t *testing.T) {
 }
 
 func TestBitgetParseMessage_NonBooks(t *testing.T) {
-	b := NewBitget("ws://test")
+	b := NewBitget("ws://test", nil)
 	if _, ok := b.parseMessage([]byte(`{"arg":{"channel":"trades"},"data":[]}`)); ok {
 		t.Error("parseMessage should reject non-books1 channel")
 	}
@@ -195,7 +195,7 @@ func TestBitgetParseMessage_NonBooks(t *testing.T) {
 
 // TestHTXParseMessage verifies HTX bbo frame parse (decompressed by caller).
 func TestHTXParseMessage(t *testing.T) {
-	h := NewHTX("ws://test")
+	h := NewHTX("ws://test", nil)
 	msg := []byte(`{"ch":"market.btcusdt.bbo","tick":{"bid":73015.5,"bidSize":0.7,"ask":73016.2,"askSize":0.8}}`)
 	pu, ok := h.parseMessage(msg)
 	if !ok {
@@ -207,7 +207,7 @@ func TestHTXParseMessage(t *testing.T) {
 }
 
 func TestHTXParseMessage_Ping(t *testing.T) {
-	h := NewHTX("ws://test")
+	h := NewHTX("ws://test", nil)
 	if _, ok := h.parseMessage([]byte(`{"ping":1234567890}`)); ok {
 		t.Error("parseMessage should not emit on a ping frame")
 	}
@@ -215,7 +215,7 @@ func TestHTXParseMessage_Ping(t *testing.T) {
 
 // TestCryptoComParseMessage verifies Crypto.com ticker frame parse.
 func TestCryptoComParseMessage(t *testing.T) {
-	c := NewCryptoCom("ws://test")
+	c := NewCryptoCom("ws://test", nil)
 	msg := []byte(`{"id":1,"result":{"channel":"ticker","data":[{"b":"73010.00","bs":"0.5","k":"73010.80","ks":"0.7"}]}}`)
 	pu, ok := c.parseMessage(msg)
 	if !ok {
@@ -227,7 +227,7 @@ func TestCryptoComParseMessage(t *testing.T) {
 }
 
 func TestCryptoComParseMessage_Heartbeat(t *testing.T) {
-	c := NewCryptoCom("ws://test")
+	c := NewCryptoCom("ws://test", nil)
 	if _, ok := c.parseMessage([]byte(`{"id":99,"method":"public/heartbeat"}`)); ok {
 		t.Error("parseMessage should not emit on a heartbeat frame")
 	}
@@ -235,7 +235,7 @@ func TestCryptoComParseMessage_Heartbeat(t *testing.T) {
 
 // TestKuCoinParseMessage verifies KuCoin /market/ticker frame parse.
 func TestKuCoinParseMessage(t *testing.T) {
-	k := NewKuCoin("https://api.kucoin.com")
+	k := NewKuCoin("https://api.kucoin.com", nil)
 	msg := []byte(`{"type":"message","topic":"/market/ticker:BTC-USDT","data":{"bestBid":"73004.10","bestBidSize":"0.2","bestAsk":"73004.90","bestAskSize":"0.3"}}`)
 	pu, ok := k.parseMessage(msg)
 	if !ok {
@@ -247,7 +247,7 @@ func TestKuCoinParseMessage(t *testing.T) {
 }
 
 func TestKuCoinParseMessage_Welcome(t *testing.T) {
-	k := NewKuCoin("https://api.kucoin.com")
+	k := NewKuCoin("https://api.kucoin.com", nil)
 	if _, ok := k.parseMessage([]byte(`{"type":"welcome","id":"abc"}`)); ok {
 		t.Error("parseMessage should reject non-message type frames")
 	}
