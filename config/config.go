@@ -108,8 +108,10 @@ func Load() *Config {
 		DepthMinQtyBTC: getEnvFloat("DEPTH_MIN_QTY_BTC", 0.005),
 		DepthMaxQtyBTC: getEnvFloat("DEPTH_MAX_QTY_BTC", 0.025),
 
-		// Triangular strategy — demo defaults tuned to emit within 60s.
-		TriangularEnabled:      getEnvBool("TRIANGULAR_ENABLED", true),
+		// Triangular strategy — off by default (out-of-spec bonus: 3-leg cycle
+		// USDT→BTC→ETH→USDT introduces ETH and is outside the "BTC arbitrage"
+		// mandate). Opt-in via TRIANGULAR_ENABLED=true.
+		TriangularEnabled:      getEnvBool("TRIANGULAR_ENABLED", false),
 		TriangularNoiseRange:   getEnvFloat("TRIANGULAR_NOISE_RANGE", 0.005),
 		TriangularSeedRefPrice: getEnvFloat("TRIANGULAR_SEED_REF_PRICE", 2000.0),
 		TriangularNotional:     getEnvFloat("TRIANGULAR_NOTIONAL", 1000.0),
