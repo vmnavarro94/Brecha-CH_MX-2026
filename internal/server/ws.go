@@ -139,7 +139,8 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	// Allow all origins for the challenge; production should check origin.
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin:        func(r *http.Request) bool { return true },
+	EnableCompression:  true,
 }
 
 // ServeWS upgrades an HTTP connection to WebSocket and registers the new client.
@@ -149,6 +150,9 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		slog.Error("ws upgrade failed", "err", err)
 		return
 	}
+
+	conn.EnableWriteCompression(true)
+	conn.SetCompressionLevel(1) //nolint:errcheck
 
 	c := &client{
 		hub:  h,
