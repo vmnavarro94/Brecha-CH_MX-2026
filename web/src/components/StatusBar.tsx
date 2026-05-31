@@ -200,9 +200,6 @@ export default function StatusBar() {
   const wsConnected = useMarketStore((s) => s.wsConnected)
   const prices = useMarketStore((s) => s.prices)
   const latency = useMarketStore((s) => s.latency)
-  const execCount = useMarketStore((s) =>
-    s.opportunities.filter((o) => o.Status === 'executed').length
-  )
   const activeCount = EXCHANGES.filter((ex) => prices[ex] !== null).length
 
   const cbInfo = CB_MAP[cb] ?? CB_MAP.active
@@ -243,7 +240,7 @@ export default function StatusBar() {
         </span>
         <span style={styles.pnlSub}>
           <TrendingUp size={13} strokeWidth={1.75} />
-          {tradeCount} trades · {execCount} ejecutadas en vivo
+          {tradeCount} trades
         </span>
       </div>
 

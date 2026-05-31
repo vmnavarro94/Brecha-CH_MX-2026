@@ -40,6 +40,7 @@ export interface Trade {
   ExecutedAt: string
   RequestedVolume: number
   PartialFill: boolean
+  strategy?: string
 }
 
 export interface SpreadStats {
@@ -98,6 +99,7 @@ export interface RawTrade {
   ExecutedAt: string
   RequestedVolume?: string
   PartialFill?: boolean
+  strategy?: string
 }
 
 export type ServerEvent =

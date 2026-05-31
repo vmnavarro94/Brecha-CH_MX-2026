@@ -212,6 +212,7 @@ export default function TradeHistory() {
           <thead>
             <tr>
               <th scope="col" style={styles.th}>Hora</th>
+              <th scope="col" style={styles.th}>Estrategia</th>
               <th scope="col" style={styles.th}>Par</th>
               <th scope="col" style={styles.thR}>Volumen</th>
               <th scope="col" style={styles.thR}>Precio compra</th>
@@ -221,50 +222,68 @@ export default function TradeHistory() {
             </tr>
           </thead>
           <tbody>
-            {slice.map((t) => (
-              <tr
-                key={t.ID}
-                style={
-                  t.ID === lastId && clamped === 0
-                    ? { animation: 'bx-rowflash 1s ease-out' }
-                    : undefined
-                }
-              >
-                <td style={styles.td}>{fmtTime(t.ExecutedAt)}</td>
-                <td style={styles.td}>
-                  <span style={styles.route}>
-                    <b>{cap(t.BuyExchange)}</b>
-                    <ArrowRight size={12} strokeWidth={1.75} style={{ color: 'var(--fg-3)' }} />
-                    <b>{cap(t.SellExchange)}</b>
-                  </span>
-                </td>
-                <td style={styles.tdR}>
-                  {t.Volume.toFixed(8)}{' '}
-                  <span style={{ color: 'var(--fg-3)', fontSize: '10px' }}>BTC</span>
-                  {t.PartialFill && (
+            {slice.map((t) => {
+              const strat = t.strategy ?? 'spatial'
+              const volUnit = strat === 'spatial' ? 'BTC' : 'USDT'
+              const hasPrices = strat === 'spatial'
+              return (
+                <tr
+                  key={t.ID}
+                  style={
+                    t.ID === lastId && clamped === 0
+                      ? { animation: 'bx-rowflash 1s ease-out' }
+                      : undefined
+                  }
+                >
+                  <td style={styles.td}>{fmtTime(t.ExecutedAt)}</td>
+                  <td style={styles.td}>
                     <span style={{
-                      marginLeft: '6px',
-                      padding: '1px 5px',
-                      borderRadius: '3px',
-                      background: 'var(--orange)',
-                      color: 'var(--bg)',
-                      fontSize: '9px',
-                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '10px',
                       letterSpacing: '0.05em',
                       textTransform: 'uppercase' as const,
-                    }}>parcial</span>
-                  )}
-                </td>
-                <td style={styles.tdR}>{fmtUsd(t.BuyPrice)}</td>
-                <td style={styles.tdR}>{fmtUsd(t.SellPrice)}</td>
-                <td style={styles.tdR}>{fmtUsd(t.Fees, 4)}</td>
-                <td style={styles.tdPnl(t.NetProfit)}>{fmtSigned(t.NetProfit)}</td>
-              </tr>
-            ))}
+                      color: 'var(--fg-2)',
+                    }}>{strat}</span>
+                  </td>
+                  <td style={styles.td}>
+                    <span style={styles.route}>
+                      <b>{cap(t.BuyExchange)}</b>
+                      <ArrowRight size={12} strokeWidth={1.75} style={{ color: 'var(--fg-3)' }} />
+                      <b>{cap(t.SellExchange)}</b>
+                    </span>
+                  </td>
+                  <td style={styles.tdR}>
+                    {t.Volume.toFixed(strat === 'spatial' ? 8 : 2)}{' '}
+                    <span style={{ color: 'var(--fg-3)', fontSize: '10px' }}>{volUnit}</span>
+                    {t.PartialFill && (
+                      <span style={{
+                        marginLeft: '6px',
+                        padding: '1px 5px',
+                        borderRadius: '3px',
+                        background: 'var(--orange)',
+                        color: 'var(--bg)',
+                        fontSize: '9px',
+                        fontWeight: 700,
+                        letterSpacing: '0.05em',
+                        textTransform: 'uppercase' as const,
+                      }}>parcial</span>
+                    )}
+                  </td>
+                  <td style={styles.tdR}>
+                    {hasPrices ? fmtUsd(t.BuyPrice) : <span style={{ color: 'var(--fg-3)' }}>—</span>}
+                  </td>
+                  <td style={styles.tdR}>
+                    {hasPrices ? fmtUsd(t.SellPrice) : <span style={{ color: 'var(--fg-3)' }}>—</span>}
+                  </td>
+                  <td style={styles.tdR}>{fmtUsd(t.Fees, 4)}</td>
+                  <td style={styles.tdPnl(t.NetProfit)}>{fmtSigned(t.NetProfit)}</td>
+                </tr>
+              )
+            })}
           </tbody>
           <tfoot style={styles.tfoot}>
             <tr>
-              <td colSpan={6} style={styles.tfootTd}>
+              <td colSpan={7} style={styles.tfootTd}>
                 Total de la página ({slice.length} trades)
               </td>
               <td style={styles.tfootTdTotal(pageTotal)}>{fmtSigned(pageTotal)}</td>

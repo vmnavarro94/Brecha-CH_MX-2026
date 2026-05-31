@@ -194,18 +194,21 @@ const styles = {
   } as React.CSSProperties,
 
   scoreBar: {
+    display: 'inline-block',
     width: '78px',
     height: '6px',
     background: 'var(--bg-inset)',
     border: '1px solid var(--line-faint)',
     borderRadius: 'var(--r-pill)',
     overflow: 'hidden',
+    verticalAlign: 'middle',
   } as React.CSSProperties,
 
   scoreBarFill: (pct: number, hot: boolean) =>
     ({
+      display: 'block',
       height: '100%',
-      width: `${pct}%`,
+      width: `${Math.max(0, Math.min(100, pct))}%`,
       background: hot
         ? 'linear-gradient(90deg, var(--orange), var(--orange-bright))'
         : 'linear-gradient(90deg, var(--orange-dim), var(--orange))',
