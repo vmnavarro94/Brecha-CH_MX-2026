@@ -96,8 +96,15 @@ func (s *SpatialStrategy) Detect(
 		costWithdrawal := buyFee.WithdrawalBTC * buyAsk
 		// Network-latency cost: per-leg basis-points hit modelling the implicit
 		// slippage from price drift during the WS network round-trip.
+		// The sell-side component is scaled by ageFactor: 1 + ageMs/1000, capped at 3×.
+		// Buy-side stays 1× (buy update is the trigger; age ≈ 0 by definition).
+		sellAgeMs := float64(now.Sub(sellPrice.ReceivedAt).Milliseconds())
+		ageFactor := 1.0 + sellAgeMs/1000.0
+		if ageFactor > 3.0 {
+			ageFactor = 3.0
+		}
 		costNetLatency := buyAsk*buyFee.NetworkLatencyBps/10000.0 +
-			sellBid*sellFee.NetworkLatencyBps/10000.0
+			sellBid*sellFee.NetworkLatencyBps/10000.0*ageFactor
 		netProfit := gross - costBuyFee - costSellFee - costSlippage - costWithdrawal - costNetLatency
 
 		if netProfit <= 0 {

@@ -753,6 +753,314 @@ func TestSpatial_SetFees_TakesEffect(t *testing.T) {
 	}
 }
 
+// --- F3: Dynamic Latency Cost tests ---
+
+// baseCostLatency returns only the network-latency component of the net cost for a
+// single sell leg (sellBid * sellFee.NetworkLatencyBps / 10000). Used to isolate
+// the latency cost from other costs in the formula.
+func baseSellLatencyCost(sellBid, netBps float64) float64 {
+	return sellBid * netBps / 10000.0
+}
+
+// TestSpatial_DynamicLatencyCost_FreshCounterparty: age=0ms, factor must be 1×.
+func TestSpatial_DynamicLatencyCost_FreshCounterparty(t *testing.T) {
+	now := time.Now()
+
+	// buy: ask=50000, sell: bid=50500 so there's a healthy gross spread.
+	// Use zero fees except NetworkLatencyBps so we can isolate the latency cost.
+	const (
+		buyAsk   = 50000.0
+		sellBid  = 50500.0
+		netBpsB  = 10.0 // sell-side 10 bps → base latency cost = 50500*10/10000 = 50.5
+	)
+
+	snapshot := map[string]types.PriceUpdate{
+		"binance": makeUpdate("binance", sellBid, 99999.0, now), // buy exchange (not sell)
+		"kraken":  {Exchange: "kraken", Bid: decimal.NewFromFloat(sellBid), Ask: decimal.NewFromFloat(99999.0), ReceivedAt: now},
+	}
+
+	cfg := defaultCfg(map[string]spatial.FeeConfig{
+		"bybit":   {TakerFee: 0, SlippageFactor: 0, WithdrawalBTC: 0, NetworkLatencyBps: 0},
+		"kraken":  {TakerFee: 0, SlippageFactor: 0, WithdrawalBTC: 0, NetworkLatencyBps: netBpsB},
+	})
+	cfg.StalenessThreshold = 10 * time.Second
+
+	snapshot["bybit"] = types.PriceUpdate{
+		Exchange:   "bybit",
+		Bid:        decimal.NewFromFloat(sellBid),
+		Ask:        decimal.NewFromFloat(buyAsk),
+		ReceivedAt: now,
+	}
+
+	spat := newSpatial(cfg)
+	// Update triggered by bybit (buyEx=bybit), kraken has fresh ReceivedAt=now (age≈0ms)
+	update := types.PriceUpdate{
+		Exchange:   "bybit",
+		Bid:        decimal.NewFromFloat(sellBid),
+		Ask:        decimal.NewFromFloat(buyAsk),
+		ReceivedAt: now,
+	}
+	opps := spat.Detect(update, snapshot, now)
+
+	// Find bybit→kraken opportunity
+	var opp *types.Opportunity
+	for i := range opps {
+		if opps[i].BuyExchange == "bybit" && opps[i].SellExchange == "kraken" {
+			opp = &opps[i]
+			break
+		}
+	}
+	if opp == nil {
+		t.Fatal("expected bybit->kraken opportunity")
+	}
+
+	// At age=0ms, ageFactor = 1 + 0/1000 = 1.0
+	// latency cost sell = sellBid * netBpsB / 10000 * 1.0
+	// latency cost buy = 0 (netBps=0 for bybit)
+	// net = gross - 0 = sellBid - buyAsk - sellBid*netBpsB/10000*1.0
+	wantLatencyCost := baseSellLatencyCost(sellBid, netBpsB) * 1.0
+	gross := sellBid - buyAsk
+	wantNet := gross - wantLatencyCost
+
+	gotNet, _ := opp.NetProfit.Float64()
+	if diff := gotNet - wantNet; diff < -0.001 || diff > 0.001 {
+		t.Errorf("fresh: net profit got %.6f, want %.6f (latency factor should be 1×)", gotNet, wantNet)
+	}
+}
+
+// TestSpatial_DynamicLatencyCost_1sStale: sell-side age=1000ms, factor must be 2×.
+func TestSpatial_DynamicLatencyCost_1sStale(t *testing.T) {
+	now := time.Now()
+	staleBy1s := now.Add(-1000 * time.Millisecond)
+
+	const (
+		buyAsk  = 50000.0
+		sellBid = 50500.0
+		netBpsB = 10.0
+	)
+
+	cfg := defaultCfg(map[string]spatial.FeeConfig{
+		"bybit":  {TakerFee: 0, SlippageFactor: 0, WithdrawalBTC: 0, NetworkLatencyBps: 0},
+		"kraken": {TakerFee: 0, SlippageFactor: 0, WithdrawalBTC: 0, NetworkLatencyBps: netBpsB},
+	})
+	cfg.StalenessThreshold = 10 * time.Second
+
+	snapshot := map[string]types.PriceUpdate{
+		"bybit": {
+			Exchange: "bybit", Bid: decimal.NewFromFloat(sellBid),
+			Ask: decimal.NewFromFloat(buyAsk), ReceivedAt: now,
+		},
+		"kraken": {
+			Exchange: "kraken", Bid: decimal.NewFromFloat(sellBid),
+			Ask: decimal.NewFromFloat(99999.0), ReceivedAt: staleBy1s,
+		},
+	}
+
+	spat := newSpatial(cfg)
+	update := types.PriceUpdate{
+		Exchange: "bybit", Bid: decimal.NewFromFloat(sellBid),
+		Ask: decimal.NewFromFloat(buyAsk), ReceivedAt: now,
+	}
+	opps := spat.Detect(update, snapshot, now)
+
+	var opp *types.Opportunity
+	for i := range opps {
+		if opps[i].BuyExchange == "bybit" && opps[i].SellExchange == "kraken" {
+			opp = &opps[i]
+			break
+		}
+	}
+	if opp == nil {
+		t.Fatal("expected bybit->kraken opportunity at 1s stale")
+	}
+
+	// ageFactor = 1 + 1000/1000 = 2.0
+	wantLatencyCost := baseSellLatencyCost(sellBid, netBpsB) * 2.0
+	gross := sellBid - buyAsk
+	wantNet := gross - wantLatencyCost
+
+	gotNet, _ := opp.NetProfit.Float64()
+	if diff := gotNet - wantNet; diff < -0.001 || diff > 0.001 {
+		t.Errorf("1s stale: net profit got %.6f, want %.6f (factor should be 2×)", gotNet, wantNet)
+	}
+}
+
+// TestSpatial_DynamicLatencyCost_2sStale: sell-side age=2000ms, factor must be exactly 3×.
+func TestSpatial_DynamicLatencyCost_2sStale(t *testing.T) {
+	now := time.Now()
+	staleBy2s := now.Add(-2000 * time.Millisecond)
+
+	const (
+		buyAsk  = 50000.0
+		sellBid = 50500.0
+		netBpsB = 10.0
+	)
+
+	cfg := defaultCfg(map[string]spatial.FeeConfig{
+		"bybit":  {TakerFee: 0, SlippageFactor: 0, WithdrawalBTC: 0, NetworkLatencyBps: 0},
+		"kraken": {TakerFee: 0, SlippageFactor: 0, WithdrawalBTC: 0, NetworkLatencyBps: netBpsB},
+	})
+	cfg.StalenessThreshold = 10 * time.Second
+
+	snapshot := map[string]types.PriceUpdate{
+		"bybit": {
+			Exchange: "bybit", Bid: decimal.NewFromFloat(sellBid),
+			Ask: decimal.NewFromFloat(buyAsk), ReceivedAt: now,
+		},
+		"kraken": {
+			Exchange: "kraken", Bid: decimal.NewFromFloat(sellBid),
+			Ask: decimal.NewFromFloat(99999.0), ReceivedAt: staleBy2s,
+		},
+	}
+
+	spat := newSpatial(cfg)
+	update := types.PriceUpdate{
+		Exchange: "bybit", Bid: decimal.NewFromFloat(sellBid),
+		Ask: decimal.NewFromFloat(buyAsk), ReceivedAt: now,
+	}
+	opps := spat.Detect(update, snapshot, now)
+
+	var opp *types.Opportunity
+	for i := range opps {
+		if opps[i].BuyExchange == "bybit" && opps[i].SellExchange == "kraken" {
+			opp = &opps[i]
+			break
+		}
+	}
+	if opp == nil {
+		t.Fatal("expected bybit->kraken opportunity at 2s stale")
+	}
+
+	// ageFactor = 1 + 2000/1000 = 3.0 (exactly at the cap boundary)
+	wantLatencyCost := baseSellLatencyCost(sellBid, netBpsB) * 3.0
+	gross := sellBid - buyAsk
+	wantNet := gross - wantLatencyCost
+
+	gotNet, _ := opp.NetProfit.Float64()
+	if diff := gotNet - wantNet; diff < -0.001 || diff > 0.001 {
+		t.Errorf("2s stale: net profit got %.6f, want %.6f (factor should be 3×)", gotNet, wantNet)
+	}
+}
+
+// TestSpatial_DynamicLatencyCost_Cap: sell-side age=5000ms, factor clamped to 3×.
+func TestSpatial_DynamicLatencyCost_Cap(t *testing.T) {
+	now := time.Now()
+	staleBy5s := now.Add(-5000 * time.Millisecond)
+
+	const (
+		buyAsk  = 50000.0
+		sellBid = 55000.0 // very large spread to survive 3× latency cost
+		netBpsB = 10.0
+	)
+
+	cfg := defaultCfg(map[string]spatial.FeeConfig{
+		"bybit":  {TakerFee: 0, SlippageFactor: 0, WithdrawalBTC: 0, NetworkLatencyBps: 0},
+		"kraken": {TakerFee: 0, SlippageFactor: 0, WithdrawalBTC: 0, NetworkLatencyBps: netBpsB},
+	})
+	cfg.StalenessThreshold = 10 * time.Second
+
+	snapshot := map[string]types.PriceUpdate{
+		"bybit": {
+			Exchange: "bybit", Bid: decimal.NewFromFloat(sellBid),
+			Ask: decimal.NewFromFloat(buyAsk), ReceivedAt: now,
+		},
+		"kraken": {
+			Exchange: "kraken", Bid: decimal.NewFromFloat(sellBid),
+			Ask: decimal.NewFromFloat(99999.0), ReceivedAt: staleBy5s,
+		},
+	}
+
+	spat := newSpatial(cfg)
+	update := types.PriceUpdate{
+		Exchange: "bybit", Bid: decimal.NewFromFloat(sellBid),
+		Ask: decimal.NewFromFloat(buyAsk), ReceivedAt: now,
+	}
+	opps := spat.Detect(update, snapshot, now)
+
+	var opp *types.Opportunity
+	for i := range opps {
+		if opps[i].BuyExchange == "bybit" && opps[i].SellExchange == "kraken" {
+			opp = &opps[i]
+			break
+		}
+	}
+	if opp == nil {
+		t.Fatal("expected bybit->kraken opportunity at 5s stale (large spread)")
+	}
+
+	// ageFactor = min(1 + 5000/1000, 3.0) = min(6.0, 3.0) = 3.0 (clamped)
+	wantLatencyCost := baseSellLatencyCost(sellBid, netBpsB) * 3.0
+	gross := sellBid - buyAsk
+	wantNet := gross - wantLatencyCost
+
+	gotNet, _ := opp.NetProfit.Float64()
+	if diff := gotNet - wantNet; diff < -0.001 || diff > 0.001 {
+		t.Errorf("5s stale (capped): net profit got %.6f, want %.6f (factor should be clamped to 3×)", gotNet, wantNet)
+	}
+}
+
+// TestSpatial_DynamicLatencyCost_BuySideUnaffected: buy-leg age=2000ms, buy cost must be 1×.
+func TestSpatial_DynamicLatencyCost_BuySideUnaffected(t *testing.T) {
+	now := time.Now()
+	// The buy exchange update itself is stale — but it IS the trigger update in Detect,
+	// so we simulate a scenario where the sell side is fresh but we pass a stale update.
+	staleBy2s := now.Add(-2000 * time.Millisecond)
+
+	const (
+		buyAsk  = 50000.0
+		sellBid = 55000.0
+		netBpsA = 10.0 // buy-side network bps
+		netBpsB = 0.0  // sell-side zero so we isolate buy
+	)
+
+	cfg := defaultCfg(map[string]spatial.FeeConfig{
+		"bybit":  {TakerFee: 0, SlippageFactor: 0, WithdrawalBTC: 0, NetworkLatencyBps: netBpsA},
+		"kraken": {TakerFee: 0, SlippageFactor: 0, WithdrawalBTC: 0, NetworkLatencyBps: netBpsB},
+	})
+	cfg.StalenessThreshold = 10 * time.Second
+
+	snapshot := map[string]types.PriceUpdate{
+		"bybit": {
+			Exchange: "bybit", Bid: decimal.NewFromFloat(sellBid),
+			Ask: decimal.NewFromFloat(buyAsk), ReceivedAt: staleBy2s,
+		},
+		"kraken": {
+			Exchange: "kraken", Bid: decimal.NewFromFloat(sellBid),
+			Ask: decimal.NewFromFloat(99999.0), ReceivedAt: now,
+		},
+	}
+
+	spat := newSpatial(cfg)
+	// The update is the "buy" trigger (bybit). Its ReceivedAt is stale.
+	update := types.PriceUpdate{
+		Exchange: "bybit", Bid: decimal.NewFromFloat(sellBid),
+		Ask: decimal.NewFromFloat(buyAsk), ReceivedAt: staleBy2s,
+	}
+	opps := spat.Detect(update, snapshot, now)
+
+	var opp *types.Opportunity
+	for i := range opps {
+		if opps[i].BuyExchange == "bybit" && opps[i].SellExchange == "kraken" {
+			opp = &opps[i]
+			break
+		}
+	}
+	if opp == nil {
+		t.Fatal("expected bybit->kraken opportunity (buy-side age test)")
+	}
+
+	// Buy-side factor must remain 1×: latency cost buy = buyAsk * netBpsA / 10000 * 1.0
+	// Sell-side factor: sell ReceivedAt=now → age=0ms → factor=1.0, but netBpsB=0 so 0 cost
+	wantBuyCost := buyAsk * netBpsA / 10000.0 * 1.0
+	gross := sellBid - buyAsk
+	wantNet := gross - wantBuyCost
+
+	gotNet, _ := opp.NetProfit.Float64()
+	if diff := gotNet - wantNet; diff < -0.001 || diff > 0.001 {
+		t.Errorf("buy-side age=2s: net profit got %.6f, want %.6f (buy factor must stay 1×)", gotNet, wantNet)
+	}
+}
+
 // TestSpatial_Race verifies that concurrent calls to SetFees and Detect do not race.
 func TestSpatial_Race(t *testing.T) {
 	now := time.Now()
